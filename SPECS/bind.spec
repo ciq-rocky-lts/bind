@@ -33,6 +33,9 @@
                                          %{_libdir}/bind %{_libdir}/named %{_datadir}/GeoIP /proc/sys/net/ipv4
 
 %global        selinuxbooleans   named_write_master_zones=1
+
+# BIND 9.16 does not work with fortify 3 level, make builds work on Fedora
+%global _fortify_level 2
 ## The order of libs is important. See lib/Makefile.in for details
 %define bind_export_libs isc dns isccfg irs
 %{!?_export_dir:%global _export_dir /bind9-export/}
@@ -51,7 +54,7 @@ Summary:  The Berkeley Internet Name Domain (BIND) DNS (Domain Name System) serv
 Name:     bind
 License:  MPLv2.0
 Version:  9.16.23
-Release:  14%{?dist}.4
+Release:  18%{?dist}.6
 Epoch:    32
 Url:      https://www.isc.org/downloads/bind/
 #
@@ -133,6 +136,8 @@ Patch190: bind-9.16-CVE-2023-2911-2.patch
 # https://gitlab.isc.org/isc-projects/bind9/commit/c003c5bc3c68f3e513654b6689e1f60280d14844
 Patch191: bind-9.16-CVE-2023-2911-3.patch
 Patch192: bind-9.16-CVE-2023-3341.patch
+# https://gitlab.isc.org/isc-projects/bind9/commit/8924adca613ca9daea63786563cce6fdbd742c56
+Patch193: bind-9.16-update-b.root-servers.net.patch
 Patch194: bind-9.16-CVE-2023-4408.patch
 Patch195: bind-9.16-CVE-2023-5517.patch
 Patch196: bind-9.16-CVE-2023-5679.patch
@@ -148,6 +153,26 @@ Patch201: bind-9.16-system-test-cds.patch
 Patch202: bind-9.16-isc-mempool-attach.patch
 # Downstream only change, complements patch 198
 Patch203: bind-9.16-isc_hp-CVE-2023-50387.patch
+# https://gitlab.isc.org/isc-projects/bind9/commit/1237d73cd1120b146ee699bbae7b2fe837cf2f98
+Patch204: bind-9.16-CVE-2023-6516-test.patch
+Patch205: bind-9.16-CVE-2024-1975.patch
+# https://gitlab.isc.org/isc-projects/bind9/commit/26c9da5f2857b72077c17e06ac79f068c63782cc
+# https://gitlab.isc.org/isc-projects/bind9/commit/c5ebda6deb0997dc520b26fa0639891459de5cb6
+# https://gitlab.isc.org/isc-projects/bind9/commit/d56d2a32b861e81c2aaaabd309c4c58b629ede32
+# https://gitlab.isc.org/isc-projects/bind9/commit/dfcadc2085c8844b5836aff2b5ea51fb60c34868
+# https://gitlab.isc.org/isc-projects/bind9/commit/fdabf4b9570a60688f9f7d1e88d885f7a3718bca
+# https://gitlab.isc.org/isc-projects/bind9/commit/8ef414a7f38a04cfc11df44adaedaf3126fa3878
+Patch206: bind-9.16-CVE-2024-1737.patch
+# https://gitlab.isc.org/isc-projects/bind9/commit/a61be8eef0ee0ca8fd8036ccb61c6f9b728158ce
+Patch207: bind-9.18-CVE-2024-4076.patch
+# https://gitlab.isc.org/isc-projects/bind9/commit/2f2f0a900b9baf5e6eba02a82e2fe9e967dc1760
+Patch209: bind-9.16-CVE-2024-1737-records.patch
+Patch210: bind-9.16-CVE-2024-1737-records-test.patch
+# https://gitlab.isc.org/isc-projects/bind9/commit/3f1826f2f78792e95f56da7af3a35c46b4d6d9af
+Patch211: bind-9.16-CVE-2024-1737-types.patch
+Patch212: bind-9.16-CVE-2024-1737-types-test.patch
+# backport issue fix
+Patch213: bind-9.16-CVE-2024-1737-records-test2.patch
 
 %{?systemd_ordering}
 Requires:       coreutils
@@ -469,6 +494,7 @@ in HTML and PDF format.
 %patch190 -p1 -b .CVE-2023-2911-2
 %patch191 -p1 -b .CVE-2023-2911-3
 %patch192 -p1 -b .CVE-2023-3341
+%patch193 -p1 -b .b.root-servers.net
 %patch194 -p1 -b .CVE-2023-4408
 %patch195 -p1 -b .CVE-2023-5517
 %patch196 -p1 -b .CVE-2023-5679
@@ -479,6 +505,15 @@ in HTML and PDF format.
 %patch201 -p1 -b .test-variant-def
 %patch202 -p1 -b .mempool-attach
 %patch203 -p1 -b .isc_hp-CVE-2023-50387
+%patch204 -p1 -b .CVE-2023-6516-test
+%patch205 -p1 -b .CVE-2024-1975
+%patch206 -p1 -b .CVE-2024-1737
+%patch207 -p1 -b .CVE-2024-4076
+%patch209 -p1 -b .CVE-2024-1737-records
+%patch210 -p1 -b .CVE-2024-1737-records-test
+%patch211 -p1 -b .CVE-2024-1737-types
+%patch212 -p1 -b .CVE-2024-1737-types-test
+%patch213 -p1 -b .CVE-2024-1737-records-test2
 
 %if %{with PKCS11}
 %patch135 -p1 -b .config-pkcs11
@@ -1207,17 +1242,30 @@ fi;
 %endif
 
 %changelog
-* Tue Mar 12 2024 Petr Menšík <pemensik@redhat.com> - 32:9.16.23-14.4
+* Fri Aug 09 2024 Petr Menšík <pemensik@redhat.com> - 32:9.16.23-18.6
+- Minor fix of reclimit test backport (CVE-2024-1737)
+
+* Wed Aug 07 2024 Petr Menšík <pemensik@redhat.com> - 32:9.16.23-18.5
+- Backport addition of max-records-per-type and max-records-per-type options
+
+* Thu Jul 18 2024 Petr Menšík <pemensik@redhat.com> - 32:9.16.23-18.2
+- Resolve CVE-2024-1975
+- Resolve CVE-2024-1737
+- Resolve CVE-2024-4076
+- Add ability to change runtime limits for max types and records per name
+
+* Mon Mar 25 2024 Petr Menšík <pemensik@redhat.com> - 32:9.16.23-18.1
 - Rebuild with correct z-stream tag again
 
-* Wed Feb 28 2024 Petr Menšík <pemensik@redhat.com> - 32:9.16.23-14.3
-- Rebuild together with bind-dyndb-ldap to adjust ABI changes
 
-* Mon Feb 19 2024 Petr Menšík <pemensik@redhat.com> - 32:9.16.23-14.2
+* Mon Mar 25 2024 Petr Menšík <pemensik@redhat.com> - 32:9.16.23-18
+- Prevent crashing at masterformat system test (CVE-2023-6516)
+
+* Mon Feb 19 2024 Petr Menšík <pemensik@redhat.com> - 32:9.16.23-17
 - Import tests for large DNS messages fix
 - Add downstream change complementing CVE-2023-50387
 
-* Mon Feb 12 2024 Petr Menšík <pemensik@redhat.com> - 32:9.16.23-14.1
+* Mon Feb 12 2024 Petr Menšík <pemensik@redhat.com> - 32:9.16.23-16
 - Prevent increased CPU load on large DNS messages (CVE-2023-4408)
 - Prevent assertion failure when nxdomain-redirect is used with
  RFC 1918 reverse zones (CVE-2023-5517)
@@ -1226,6 +1274,9 @@ fi;
   condition (CVE-2023-6516)
 - Prevent increased CPU consumption in DNSSEC validator (CVE-2023-50387
   CVE-2023-50868)
+
+* Thu Dec 07 2023 Petr Menšík <pemensik@redhat.com> - 32:9.16.23-15
+- Update addresses of b.root-servers.net (RHEL-18188)
 
 * Wed Sep 20 2023 Petr Menšík <pemensik@redhat.com> - 32:9.16.23-14
 - Limit the amount of recursion possible in control channel (CVE-2023-3341)
