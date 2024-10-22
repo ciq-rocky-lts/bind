@@ -1,0 +1,29 @@
+From 908b71224037745db3d1420a37e99ee9cbb3b3b3 Mon Sep 17 00:00:00 2001
+From: Petr Mensik <pemensik@redhat.com>
+Date: Thu, 12 Dec 2019 16:05:25 +0100
+Subject: [PATCH] Terminate query if both setup_lookup and next_origin failed
+
+That happens in case searched name plus search domain is too long and no
+shorted origin would follow.
+---
+ bin/dig/dighost.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/bin/dig/dighost.c b/bin/dig/dighost.c
+index 6302a98..ed9625e 100644
+--- a/bin/dig/dighost.c
++++ b/bin/dig/dighost.c
+@@ -2053,6 +2053,10 @@ start_lookup(void) {
+ 			do_lookup(current_lookup);
+ 		else if (next_origin(current_lookup))
+ 			check_next_lookup(current_lookup);
++		else {
++			cancel_lookup(current_lookup);
++			check_next_lookup(current_lookup);
++		}
+ 	} else {
+ 		check_if_done();
+ 	}
+-- 
+2.21.0
+

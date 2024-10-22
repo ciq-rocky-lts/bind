@@ -1,0 +1,33 @@
+From f6b9f4dfa61038a353f3974ec7683231fa23ed21 Mon Sep 17 00:00:00 2001
+From: Petr Mensik <pemensik@redhat.com>
+Date: Wed, 11 Mar 2020 17:36:51 +0100
+Subject: [PATCH] Allow conflicting files in zones, warn only
+
+Change hard error to just annoying warning. Broken configuration is
+still error, but it was possible before. Make it possible again.
+Would be fixed by using in-view clause properly.
+---
+ lib/bind9/check.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/lib/bind9/check.c b/lib/bind9/check.c
+index 545e3c6..b02a894 100644
+--- a/lib/bind9/check.c
++++ b/lib/bind9/check.c
+@@ -2650,11 +2650,11 @@ fileexist(const cfg_obj_t *obj, isc_symtab_t *symtab, isc_boolean_t writeable,
+ 		if (writeable) {
+ 			file = cfg_obj_file(symvalue.as_cpointer);
+ 			line = cfg_obj_line(symvalue.as_cpointer);
+-			cfg_obj_log(obj, logctx, ISC_LOG_ERROR,
++			cfg_obj_log(obj, logctx, ISC_LOG_WARNING,
+ 				    "writeable file '%s': already in use: "
+ 				    "%s:%u", cfg_obj_asstring(obj),
+ 				    file, line);
+-			return (ISC_R_EXISTS);
++			return (ISC_R_SUCCESS); // Pretend it is ok
+ 		}
+ 		result = isc_symtab_lookup(symtab, cfg_obj_asstring(obj), 2,
+ 					   &symvalue);
+-- 
+2.21.1
+

@@ -1,0 +1,181 @@
+diff --git a/lib/isc/include/isc/result.h b/lib/isc/include/isc/result.h
+index 246aefb..0007543 100644
+--- a/lib/isc/include/isc/result.h
++++ b/lib/isc/include/isc/result.h
+@@ -83,9 +83,9 @@
+ #define ISC_R_UNSET			61	/*%< unset */
+ #define ISC_R_MULTIPLE			62	/*%< multiple */
+ #define ISC_R_WOULDBLOCK		63	/*%< would block */
+-
++#define ISC_R_TIMESHIFTED               64      /*%< system time changed */
+ /*% Not a result code: the number of results. */
+-#define ISC_R_NRESULTS 			64
++#define ISC_R_NRESULTS 			66
+ 
+ ISC_LANG_BEGINDECLS
+ 
+diff --git a/lib/isc/include/isc/util.h b/lib/isc/include/isc/util.h
+index 332dc0c..f81967d 100644
+--- a/lib/isc/include/isc/util.h
++++ b/lib/isc/include/isc/util.h
+@@ -233,6 +233,10 @@
+  * Time
+  */
+ #define TIME_NOW(tp) 	RUNTIME_CHECK(isc_time_now((tp)) == ISC_R_SUCCESS)
++#ifdef CLOCK_BOOTTIME
++#define TIME_MONOTONIC(tp) 	RUNTIME_CHECK(isc_time_boottime((tp)) == ISC_R_SUCCESS)
++#endif
++
+ 
+ /*%
+  * Misc
+diff --git a/lib/isc/result.c b/lib/isc/result.c
+index a707c32..6776fc6 100644
+--- a/lib/isc/result.c
++++ b/lib/isc/result.c
+@@ -99,6 +99,7 @@ static const char *description[ISC_R_NRESULTS] = {
+ 	"unset",				/*%< 61 */
+ 	"multiple",				/*%< 62 */
+ 	"would block",				/*%< 63 */
++        "time changed",                         /*%< 64 */
+ };
+ 
+ static const char *identifier[ISC_R_NRESULTS] = {
+@@ -166,6 +167,7 @@ static const char *identifier[ISC_R_NRESULTS] = {
+ 	"ISC_R_UNSET",
+ 	"ISC_R_MULTIPLE",
+ 	"ISC_R_WOULDBLOCK",
++        "ISC_R_TIMESHIFTED",
+ };
+ 
+ #define ISC_RESULT_RESULTSET			2
+diff --git a/lib/isc/unix/app.c b/lib/isc/unix/app.c
+index bace2bd..e9814d2 100644
+--- a/lib/isc/unix/app.c
++++ b/lib/isc/unix/app.c
+@@ -441,15 +441,51 @@ isc__app_ctxonrun(isc_appctx_t *ctx0, isc_mem_t *mctx, isc_task_t *task,
+ static isc_result_t
+ evloop(isc__appctx_t *ctx) {
+ 	isc_result_t result;
++        isc_time_t now;
++#ifdef CLOCK_BOOTTIME
++        isc_time_t monotonic;
++        isc_uint64_t diff  = 0;
++#else
++        isc_time_t prev;
++        TIME_NOW(&prev);
++#endif
++
++
++
+ 
+ 	while (!ctx->want_shutdown) {
+ 		int n;
+-		isc_time_t when, now;
++		isc_time_t when;
++                
+ 		struct timeval tv, *tvp;
+ 		isc_socketwait_t *swait;
+ 		isc_boolean_t readytasks;
+ 		isc_boolean_t call_timer_dispatch = ISC_FALSE;
+ 
++                isc_uint64_t us; 
++
++#ifdef CLOCK_BOOTTIME
++                // TBD macros for following three lines
++                TIME_NOW(&now);
++                TIME_MONOTONIC(&monotonic);
++                // INSIST(now.seconds > monotonic.seconds) 
++                us = isc_time_microdiff (&now, &monotonic);
++                if (us < diff){ 
++                  us = diff - us;
++                  if (us > 1000000){ // ignoring shifts less than one second
++                    return ISC_R_TIMESHIFTED;
++                  };
++                  diff = isc_time_microdiff (&now, &monotonic);
++                } else {
++                  diff = isc_time_microdiff (&now, &monotonic);
++                  // not implemented
++                }
++#else
++                TIME_NOW(&now);
++                if (isc_time_compare (&now, &prev) < 0)
++                  return ISC_R_TIMESHIFTED;
++                TIME_NOW(&prev);
++#endif                
+ 		/*
+ 		 * Check the reload (or suspend) case first for exiting the
+ 		 * loop as fast as possible in case:
+@@ -474,9 +510,10 @@ evloop(isc__appctx_t *ctx) {
+ 			if (result != ISC_R_SUCCESS)
+ 				tvp = NULL;
+ 			else {
+-				isc_uint64_t us;
++
+ 
+ 				TIME_NOW(&now);
++
+ 				us = isc_time_microdiff(&when, &now);
+ 				if (us == 0)
+ 					call_timer_dispatch = ISC_TRUE;
+diff --git a/lib/isc/unix/include/isc/time.h b/lib/isc/unix/include/isc/time.h
+index 75e24b9..de8b399 100644
+--- a/lib/isc/unix/include/isc/time.h
++++ b/lib/isc/unix/include/isc/time.h
+@@ -129,6 +129,26 @@ isc_time_isepoch(const isc_time_t *t);
+  *\li	't' is a valid pointer.
+  */
+ 
++#ifdef CLOCK_BOOTTIME
++isc_result_t
++isc_time_boottime(isc_time_t *t);
++/*%<
++ * Set 't' to monotonic time from previous boot
++ * it's not affected by system time change. It also
++ * includes the time system was suspended
++ *
++ * Requires:
++ *\li	't' is a valid pointer.
++ *
++ * Returns:
++ *
++ *\li	Success
++ *\li	Unexpected error
++ *		Getting the time from the system failed.
++ */
++#endif /* CLOCK_BOOTTIME */
++ 
++
+ isc_result_t
+ isc_time_now(isc_time_t *t);
+ /*%<
+diff --git a/lib/isc/unix/time.c b/lib/isc/unix/time.c
+index 2210240..d7613b8 100644
+--- a/lib/isc/unix/time.c
++++ b/lib/isc/unix/time.c
+@@ -496,3 +496,25 @@ isc_time_formatISO8601ms(const isc_time_t *t, char *buf, unsigned int len) {
+ 			 t->nanoseconds / NS_PER_MS);
+ 	}
+ }
++
++
++#ifdef CLOCK_BOOTTIME
++isc_result_t
++isc_time_boottime(isc_time_t *t) {
++  struct timespec ts;
++  
++  char strbuf[ISC_STRERRORSIZE];
++
++  if (clock_gettime (CLOCK_BOOTTIME, &ts) != 0){
++    isc__strerror(errno, strbuf, sizeof(strbuf));
++    UNEXPECTED_ERROR(__FILE__, __LINE__, "%s", strbuf);
++    return (ISC_R_UNEXPECTED);    
++  }
++
++  t->seconds = ts.tv_sec;
++  t->nanoseconds = ts.tv_nsec;
++
++  return (ISC_R_SUCCESS);
++  
++};
++#endif

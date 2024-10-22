@@ -1,0 +1,672 @@
+From 64d62856d251b58fe3350e9c3cf985a78debba5d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ond=C5=99ej=20Sur=C3=BD?= <ondrej@isc.org>
+Date: Wed, 7 Aug 2019 05:46:45 -0400
+Subject: [PATCH] Merge branch '1148-deadlock-hangs-named-v9_11' into 'v9_11'
+
+Convert (dns_view_t){ .weakrefs } to isc_refcount_t
+
+See merge request isc-projects/bind9!2227
+
+(cherry picked from commit e3903e83962c659bbac52454c816588c24078b5e)
+---
+ lib/dns/client.c           | 121 +++++++++++++++++--------------------
+ lib/dns/include/dns/view.h |   2 +-
+ lib/dns/view.c             |  88 +++++++++------------------
+ lib/isc/app_api.c          |  18 +++++-
+ 4 files changed, 103 insertions(+), 126 deletions(-)
+
+diff --git a/lib/dns/client.c b/lib/dns/client.c
+index b0dfa57dbe..e7eb40cd07 100644
+--- a/lib/dns/client.c
++++ b/lib/dns/client.c
+@@ -17,6 +17,7 @@
+ #include <isc/buffer.h>
+ #include <isc/mem.h>
+ #include <isc/mutex.h>
++#include <isc/refcount.h>
+ #include <isc/safe.h>
+ #include <isc/sockaddr.h>
+ #include <isc/socket.h>
+@@ -92,8 +93,9 @@ struct dns_client {
+ 	unsigned int			find_timeout;
+ 	unsigned int			find_udpretries;
+ 
++	isc_refcount_t			references;
++
+ 	/* Locked */
+-	unsigned int			references;
+ 	dns_viewlist_t			viewlist;
+ 	ISC_LIST(struct resctx)		resctxs;
+ 	ISC_LIST(struct reqctx)		reqctxs;
+@@ -463,8 +465,7 @@ dns_client_createx2(isc_mem_t *mctx, isc_appctx_t *actx,
+ 
+ 	result = isc_mutex_init(&client->lock);
+ 	if (result != ISC_R_SUCCESS) {
+-		isc_mem_put(mctx, client, sizeof(*client));
+-		return (result);
++		goto cleanup_client;
+ 	}
+ 
+ 	client->actx = actx;
+@@ -474,12 +475,14 @@ dns_client_createx2(isc_mem_t *mctx, isc_appctx_t *actx,
+ 
+ 	client->task = NULL;
+ 	result = isc_task_create(client->taskmgr, 0, &client->task);
+-	if (result != ISC_R_SUCCESS)
+-		goto cleanup;
++	if (result != ISC_R_SUCCESS) {
++		goto cleanup_lock;
++	}
+ 
+ 	result = dns_dispatchmgr_create(mctx, NULL, &dispatchmgr);
+-	if (result != ISC_R_SUCCESS)
+-		goto cleanup;
++	if (result != ISC_R_SUCCESS) {
++		goto cleanup_task;
++	}
+ 	client->dispatchmgr = dispatchmgr;
+ 
+ 	/*
+@@ -491,8 +494,9 @@ dns_client_createx2(isc_mem_t *mctx, isc_appctx_t *actx,
+ 		result = getudpdispatch(AF_INET, dispatchmgr, socketmgr,
+ 					taskmgr, ISC_TRUE,
+ 					&dispatchv4, localaddr4);
+-		if (result == ISC_R_SUCCESS)
++		if (result == ISC_R_SUCCESS) {
+ 			client->dispatchv4 = dispatchv4;
++		}
+ 	}
+ 
+ 	client->dispatchv6 = NULL;
+@@ -500,22 +504,30 @@ dns_client_createx2(isc_mem_t *mctx, isc_appctx_t *actx,
+ 		result = getudpdispatch(AF_INET6, dispatchmgr, socketmgr,
+ 					taskmgr, ISC_TRUE,
+ 					&dispatchv6, localaddr6);
+-		if (result == ISC_R_SUCCESS)
++		if (result == ISC_R_SUCCESS) {
+ 			client->dispatchv6 = dispatchv6;
++		}
+ 	}
+ 
+ 	/* We need at least one of the dispatchers */
+ 	if (dispatchv4 == NULL && dispatchv6 == NULL) {
+ 		INSIST(result != ISC_R_SUCCESS);
+-		goto cleanup;
++		goto cleanup_dispatchmgr;
++	}
++
++	result = isc_refcount_init(&client->references, 1);
++	if (result != ISC_R_SUCCESS) {
++		goto cleanup_dispatches;
+ 	}
+ 
+ 	/* Create the default view for class IN */
+ 	result = createview(mctx, dns_rdataclass_in, options, taskmgr,
+ 			    RESOLVER_NTASKS, socketmgr, timermgr,
+ 			    dispatchmgr, dispatchv4, dispatchv6, &view);
+-	if (result != ISC_R_SUCCESS)
+-		goto cleanup;
++	if (result != ISC_R_SUCCESS) {
++		goto cleanup_references;
++	}
++
+ 	ISC_LIST_INIT(client->viewlist);
+ 	ISC_LIST_APPEND(client->viewlist, view, link);
+ 
+@@ -535,32 +547,38 @@ dns_client_createx2(isc_mem_t *mctx, isc_appctx_t *actx,
+ 	client->find_udpretries = DEF_FIND_UDPRETRIES;
+ 	client->attributes = 0;
+ 
+-	client->references = 1;
+ 	client->magic = DNS_CLIENT_MAGIC;
+ 
+ 	*clientp = client;
+ 
+ 	return (ISC_R_SUCCESS);
+ 
+- cleanup:
++ cleanup_references:
++	isc_refcount_decrement(&client->references, NULL);
++	isc_refcount_destroy(&client->references);
++ cleanup_dispatches:
+ 	if (dispatchv4 != NULL)
+ 		dns_dispatch_detach(&dispatchv4);
+ 	if (dispatchv6 != NULL)
+ 		dns_dispatch_detach(&dispatchv6);
+-	if (dispatchmgr != NULL)
+-		dns_dispatchmgr_destroy(&dispatchmgr);
+-	if (client->task != NULL)
+-		isc_task_detach(&client->task);
++ cleanup_dispatchmgr:
++	dns_dispatchmgr_destroy(&dispatchmgr);
++ cleanup_task:
++	isc_task_detach(&client->task);
++ cleanup_lock:
++	DESTROYLOCK(&client->lock);
++ cleanup_client:
+ 	isc_mem_put(mctx, client, sizeof(*client));
+ 
+ 	return (result);
+ }
+ 
+ static void
+-destroyclient(dns_client_t **clientp) {
+-	dns_client_t *client = *clientp;
++destroyclient(dns_client_t *client) {
+ 	dns_view_t *view;
+ 
++	isc_refcount_destroy(&client->references);
++
+ 	while ((view = ISC_LIST_HEAD(client->viewlist)) != NULL) {
+ 		ISC_LIST_UNLINK(client->viewlist, view, link);
+ 		dns_view_detach(&view);
+@@ -592,32 +610,22 @@ destroyclient(dns_client_t **clientp) {
+ 	client->magic = 0;
+ 
+ 	isc_mem_putanddetach(&client->mctx, client, sizeof(*client));
+-
+-	*clientp = NULL;
+ }
+ 
+ void
+ dns_client_destroy(dns_client_t **clientp) {
+ 	dns_client_t *client;
+-	isc_boolean_t destroyok = ISC_FALSE;
++	isc_uint32_t references;
+ 
+ 	REQUIRE(clientp != NULL);
+ 	client = *clientp;
++	*clientp = NULL;
+ 	REQUIRE(DNS_CLIENT_VALID(client));
+ 
+-	LOCK(&client->lock);
+-	client->references--;
+-	if (client->references == 0 && ISC_LIST_EMPTY(client->resctxs) &&
+-	    ISC_LIST_EMPTY(client->reqctxs) &&
+-	    ISC_LIST_EMPTY(client->updatectxs)) {
+-		destroyok = ISC_TRUE;
++	isc_refcount_decrement(&client->references, &references);
++	if (references == 0U) {
++		destroyclient(client);
+ 	}
+-	UNLOCK(&client->lock);
+-
+-	if (destroyok)
+-		destroyclient(&client);
+-
+-	*clientp = NULL;
+ }
+ 
+ isc_result_t
+@@ -1407,6 +1415,7 @@ dns_client_startresolve(dns_client_t *client, dns_name_t *name,
+ 	rctx->event = event;
+ 
+ 	rctx->magic = RCTX_MAGIC;
++	isc_refcount_increment(&client->references, NULL);
+ 
+ 	LOCK(&client->lock);
+ 	ISC_LIST_APPEND(client->resctxs, rctx, link);
+@@ -1477,10 +1486,10 @@ dns_client_destroyrestrans(dns_clientrestrans_t **transp) {
+ 	resctx_t *rctx;
+ 	isc_mem_t *mctx;
+ 	dns_client_t *client;
+-	isc_boolean_t need_destroyclient = ISC_FALSE;
+ 
+ 	REQUIRE(transp != NULL);
+ 	rctx = (resctx_t *)*transp;
++	*transp = NULL;
+ 	REQUIRE(RCTX_VALID(rctx));
+ 	REQUIRE(rctx->fetch == NULL);
+ 	REQUIRE(rctx->event == NULL);
+@@ -1502,11 +1511,6 @@ dns_client_destroyrestrans(dns_clientrestrans_t **transp) {
+ 	INSIST(ISC_LINK_LINKED(rctx, link));
+ 	ISC_LIST_UNLINK(client->resctxs, rctx, link);
+ 
+-	if (client->references == 0 && ISC_LIST_EMPTY(client->resctxs) &&
+-	    ISC_LIST_EMPTY(client->reqctxs) &&
+-	    ISC_LIST_EMPTY(client->updatectxs))
+-		need_destroyclient = ISC_TRUE;
+-
+ 	UNLOCK(&client->lock);
+ 
+ 	INSIST(ISC_LIST_EMPTY(rctx->namelist));
+@@ -1516,10 +1520,8 @@ dns_client_destroyrestrans(dns_clientrestrans_t **transp) {
+ 
+ 	isc_mem_put(mctx, rctx, sizeof(*rctx));
+ 
+-	if (need_destroyclient)
+-		destroyclient(&client);
++	dns_client_destroy(&client);
+ 
+-	*transp = NULL;
+ }
+ 
+ isc_result_t
+@@ -1793,6 +1795,7 @@ dns_client_startrequest(dns_client_t *client, dns_message_t *qmessage,
+ 
+ 	LOCK(&client->lock);
+ 	ISC_LIST_APPEND(client->reqctxs, ctx, link);
++	isc_refcount_increment(&client->references, NULL);
+ 	UNLOCK(&client->lock);
+ 
+ 	ctx->request = NULL;
+@@ -1807,6 +1810,8 @@ dns_client_startrequest(dns_client_t *client, dns_message_t *qmessage,
+ 		return (ISC_R_SUCCESS);
+ 	}
+ 
++	isc_refcount_decrement(&client->references, NULL);
++
+  cleanup:
+ 	if (ctx != NULL) {
+ 		LOCK(&client->lock);
+@@ -1847,10 +1852,10 @@ dns_client_destroyreqtrans(dns_clientreqtrans_t **transp) {
+ 	reqctx_t *ctx;
+ 	isc_mem_t *mctx;
+ 	dns_client_t *client;
+-	isc_boolean_t need_destroyclient = ISC_FALSE;
+ 
+ 	REQUIRE(transp != NULL);
+ 	ctx = (reqctx_t *)*transp;
++	*transp = NULL;
+ 	REQUIRE(REQCTX_VALID(ctx));
+ 	client = ctx->client;
+ 	REQUIRE(DNS_CLIENT_VALID(client));
+@@ -1865,12 +1870,6 @@ dns_client_destroyreqtrans(dns_clientreqtrans_t **transp) {
+ 	INSIST(ISC_LINK_LINKED(ctx, link));
+ 	ISC_LIST_UNLINK(client->reqctxs, ctx, link);
+ 
+-	if (client->references == 0 && ISC_LIST_EMPTY(client->resctxs) &&
+-	    ISC_LIST_EMPTY(client->reqctxs) &&
+-	    ISC_LIST_EMPTY(client->updatectxs)) {
+-		need_destroyclient = ISC_TRUE;
+-	}
+-
+ 	UNLOCK(&client->lock);
+ 
+ 	DESTROYLOCK(&ctx->lock);
+@@ -1878,10 +1877,7 @@ dns_client_destroyreqtrans(dns_clientreqtrans_t **transp) {
+ 
+ 	isc_mem_put(mctx, ctx, sizeof(*ctx));
+ 
+-	if (need_destroyclient)
+-		destroyclient(&client);
+-
+-	*transp = NULL;
++	dns_client_destroy(&client);
+ }
+ 
+ /*%
+@@ -2971,6 +2967,7 @@ dns_client_startupdate(dns_client_t *client, dns_rdataclass_t rdclass,
+ 
+ 	LOCK(&client->lock);
+ 	ISC_LIST_APPEND(client->updatectxs, uctx, link);
++	isc_refcount_increment(&client->references, NULL);
+ 	UNLOCK(&client->lock);
+ 
+ 	*transp = (dns_clientupdatetrans_t *)uctx;
+@@ -2989,6 +2986,8 @@ dns_client_startupdate(dns_client_t *client, dns_rdataclass_t rdclass,
+ 	}
+ 	if (result == ISC_R_SUCCESS)
+ 		return (result);
++
++	isc_refcount_decrement(&client->references, NULL);
+ 	*transp = NULL;
+ 
+  fail:
+@@ -3046,11 +3045,11 @@ dns_client_destroyupdatetrans(dns_clientupdatetrans_t **transp) {
+ 	updatectx_t *uctx;
+ 	isc_mem_t *mctx;
+ 	dns_client_t *client;
+-	isc_boolean_t need_destroyclient = ISC_FALSE;
+ 	isc_sockaddr_t *sa;
+ 
+ 	REQUIRE(transp != NULL);
+ 	uctx = (updatectx_t *)*transp;
++	*transp = NULL;
+ 	REQUIRE(UCTX_VALID(uctx));
+ 	client = uctx->client;
+ 	REQUIRE(DNS_CLIENT_VALID(client));
+@@ -3071,11 +3070,6 @@ dns_client_destroyupdatetrans(dns_clientupdatetrans_t **transp) {
+ 	INSIST(ISC_LINK_LINKED(uctx, link));
+ 	ISC_LIST_UNLINK(client->updatectxs, uctx, link);
+ 
+-	if (client->references == 0 && ISC_LIST_EMPTY(client->resctxs) &&
+-	    ISC_LIST_EMPTY(client->reqctxs) &&
+-	    ISC_LIST_EMPTY(client->updatectxs))
+-		need_destroyclient = ISC_TRUE;
+-
+ 	UNLOCK(&client->lock);
+ 
+ 	DESTROYLOCK(&uctx->lock);
+@@ -3083,10 +3077,7 @@ dns_client_destroyupdatetrans(dns_clientupdatetrans_t **transp) {
+ 
+ 	isc_mem_put(mctx, uctx, sizeof(*uctx));
+ 
+-	if (need_destroyclient)
+-		destroyclient(&client);
+-
+-	*transp = NULL;
++	dns_client_destroy(&client);
+ }
+ 
+ isc_mem_t *
+diff --git a/lib/dns/include/dns/view.h b/lib/dns/include/dns/view.h
+index 7cd88f8377..e383c40f0f 100644
+--- a/lib/dns/include/dns/view.h
++++ b/lib/dns/include/dns/view.h
+@@ -191,9 +191,9 @@ struct dns_view {
+ 
+ 	/* Locked by themselves. */
+ 	isc_refcount_t			references;
++	isc_refcount_t			weakrefs;
+ 
+ 	/* Locked by lock. */
+-	unsigned int			weakrefs;
+ 	unsigned int			attributes;
+ 	/* Under owner's locking control. */
+ 	ISC_LINK(struct dns_view)	link;
+diff --git a/lib/dns/view.c b/lib/dns/view.c
+index f53193c3ec..db09c3db6e 100644
+--- a/lib/dns/view.c
++++ b/lib/dns/view.c
+@@ -155,9 +155,13 @@ dns_view_create(isc_mem_t *mctx, dns_rdataclass_t rdclass,
+ 	view->frozen = ISC_FALSE;
+ 	view->task = NULL;
+ 	result = isc_refcount_init(&view->references, 1);
+-	if (result != ISC_R_SUCCESS)
++	if (result != ISC_R_SUCCESS) {
+ 		goto cleanup_fwdtable;
+-	view->weakrefs = 0;
++	}
++	result = isc_refcount_init(&view->weakrefs, 1);
++	if (result != ISC_R_SUCCESS) {
++		goto cleanup_references;
++	}
+ 	view->attributes = (DNS_VIEWATTR_RESSHUTDOWN|DNS_VIEWATTR_ADBSHUTDOWN|
+ 			    DNS_VIEWATTR_REQSHUTDOWN);
+ 	view->statickeys = NULL;
+@@ -167,7 +171,7 @@ dns_view_create(isc_mem_t *mctx, dns_rdataclass_t rdclass,
+ 	view->matchrecursiveonly = ISC_FALSE;
+ 	result = dns_tsigkeyring_create(view->mctx, &view->dynamickeys);
+ 	if (result != ISC_R_SUCCESS)
+-		goto cleanup_references;
++		goto cleanup_weakrefs;
+ 	view->peers = NULL;
+ 	view->order = NULL;
+ 	view->delonly = NULL;
+@@ -304,6 +308,10 @@ dns_view_create(isc_mem_t *mctx, dns_rdataclass_t rdclass,
+ 	if (view->dynamickeys != NULL)
+ 		dns_tsigkeyring_detach(&view->dynamickeys);
+ 
++ cleanup_weakrefs:
++	isc_refcount_decrement(&view->weakrefs, NULL);
++	isc_refcount_destroy(&view->weakrefs);
++
+  cleanup_references:
+ 	isc_refcount_destroy(&view->references);
+ 
+@@ -336,12 +344,13 @@ destroy(dns_view_t *view) {
+ 	dns_dlzdb_t *dlzdb;
+ 
+ 	REQUIRE(!ISC_LINK_LINKED(view, link));
+-	REQUIRE(isc_refcount_current(&view->references) == 0);
+-	REQUIRE(view->weakrefs == 0);
+ 	REQUIRE(RESSHUTDOWN(view));
+ 	REQUIRE(ADBSHUTDOWN(view));
+ 	REQUIRE(REQSHUTDOWN(view));
+ 
++	isc_refcount_destroy(&view->references);
++	isc_refcount_destroy(&view->weakrefs);
++
+ 	if (view->order != NULL)
+ 		dns_order_detach(&view->order);
+ 	if (view->peers != NULL)
+@@ -536,26 +545,12 @@ destroy(dns_view_t *view) {
+ 	DESTROYLOCK(&view->new_zone_lock);
+ 	DESTROYLOCK(&view->lock);
+ 	isc_refcount_destroy(&view->references);
++	isc_refcount_destroy(&view->weakrefs);
+ 	isc_mem_free(view->mctx, view->nta_file);
+ 	isc_mem_free(view->mctx, view->name);
+ 	isc_mem_putanddetach(&view->mctx, view, sizeof(*view));
+ }
+ 
+-/*
+- * Return true iff 'view' may be freed.
+- * The caller must be holding the view lock.
+- */
+-static isc_boolean_t
+-all_done(dns_view_t *view) {
+-
+-	if (isc_refcount_current(&view->references) == 0 &&
+-	    view->weakrefs == 0 &&
+-	    RESSHUTDOWN(view) && ADBSHUTDOWN(view) && REQSHUTDOWN(view))
+-		return (ISC_TRUE);
+-
+-	return (ISC_FALSE);
+-}
+-
+ void
+ dns_view_attach(dns_view_t *source, dns_view_t **targetp) {
+ 
+@@ -571,10 +566,10 @@ static void
+ view_flushanddetach(dns_view_t **viewp, isc_boolean_t flush) {
+ 	dns_view_t *view;
+ 	unsigned int refs;
+-	isc_boolean_t done = ISC_FALSE;
+ 
+ 	REQUIRE(viewp != NULL);
+ 	view = *viewp;
++	*viewp = NULL;
+ 	REQUIRE(DNS_VIEW_VALID(view));
+ 
+ 	if (flush)
+@@ -613,7 +608,6 @@ view_flushanddetach(dns_view_t **viewp, isc_boolean_t flush) {
+ 		if (view->catzs != NULL) {
+ 			dns_catz_catzs_detach(&view->catzs);
+ 		}
+-		done = all_done(view);
+ 		UNLOCK(&view->lock);
+ 
+ 		/* Need to detach zones outside view lock */
+@@ -622,12 +616,9 @@ view_flushanddetach(dns_view_t **viewp, isc_boolean_t flush) {
+ 
+ 		if (rdzone != NULL)
+ 			dns_zone_detach(&rdzone);
+-	}
+-
+-	*viewp = NULL;
+ 
+-	if (done)
+-		destroy(view);
++		dns_view_weakdetach(&view);
++	}
+ }
+ 
+ void
+@@ -661,9 +652,7 @@ dns_view_weakattach(dns_view_t *source, dns_view_t **targetp) {
+ 	REQUIRE(DNS_VIEW_VALID(source));
+ 	REQUIRE(targetp != NULL && *targetp == NULL);
+ 
+-	LOCK(&source->lock);
+-	source->weakrefs++;
+-	UNLOCK(&source->lock);
++	isc_refcount_increment(&source->weakrefs, NULL);
+ 
+ 	*targetp = source;
+ }
+@@ -671,30 +660,22 @@ dns_view_weakattach(dns_view_t *source, dns_view_t **targetp) {
+ void
+ dns_view_weakdetach(dns_view_t **viewp) {
+ 	dns_view_t *view;
+-	isc_boolean_t done = ISC_FALSE;
++	unsigned int weakrefs;
+ 
+ 	REQUIRE(viewp != NULL);
+ 	view = *viewp;
+ 	REQUIRE(DNS_VIEW_VALID(view));
+-
+-	LOCK(&view->lock);
+-
+-	INSIST(view->weakrefs > 0);
+-	view->weakrefs--;
+-	done = all_done(view);
+-
+-	UNLOCK(&view->lock);
+-
+ 	*viewp = NULL;
+ 
+-	if (done)
++	isc_refcount_decrement(&view->weakrefs, &weakrefs);
++	if (weakrefs == 0) {
+ 		destroy(view);
++	}
+ }
+ 
+ static void
+ resolver_shutdown(isc_task_t *task, isc_event_t *event) {
+ 	dns_view_t *view = event->ev_arg;
+-	isc_boolean_t done;
+ 
+ 	REQUIRE(event->ev_type == DNS_EVENT_VIEWRESSHUTDOWN);
+ 	REQUIRE(DNS_VIEW_VALID(view));
+@@ -705,20 +686,15 @@ resolver_shutdown(isc_task_t *task, isc_event_t *event) {
+ 	isc_event_free(&event);
+ 
+ 	LOCK(&view->lock);
+-
+ 	view->attributes |= DNS_VIEWATTR_RESSHUTDOWN;
+-	done = all_done(view);
+-
+ 	UNLOCK(&view->lock);
+ 
+-	if (done)
+-		destroy(view);
++	dns_view_weakdetach(&view);
+ }
+ 
+ static void
+ adb_shutdown(isc_task_t *task, isc_event_t *event) {
+ 	dns_view_t *view = event->ev_arg;
+-	isc_boolean_t done;
+ 
+ 	REQUIRE(event->ev_type == DNS_EVENT_VIEWADBSHUTDOWN);
+ 	REQUIRE(DNS_VIEW_VALID(view));
+@@ -729,20 +705,15 @@ adb_shutdown(isc_task_t *task, isc_event_t *event) {
+ 	isc_event_free(&event);
+ 
+ 	LOCK(&view->lock);
+-
+ 	view->attributes |= DNS_VIEWATTR_ADBSHUTDOWN;
+-	done = all_done(view);
+-
+ 	UNLOCK(&view->lock);
+ 
+-	if (done)
+-		destroy(view);
++	dns_view_weakdetach(&view);
+ }
+ 
+ static void
+ req_shutdown(isc_task_t *task, isc_event_t *event) {
+ 	dns_view_t *view = event->ev_arg;
+-	isc_boolean_t done;
+ 
+ 	REQUIRE(event->ev_type == DNS_EVENT_VIEWREQSHUTDOWN);
+ 	REQUIRE(DNS_VIEW_VALID(view));
+@@ -753,14 +724,10 @@ req_shutdown(isc_task_t *task, isc_event_t *event) {
+ 	isc_event_free(&event);
+ 
+ 	LOCK(&view->lock);
+-
+ 	view->attributes |= DNS_VIEWATTR_REQSHUTDOWN;
+-	done = all_done(view);
+-
+ 	UNLOCK(&view->lock);
+ 
+-	if (done)
+-		destroy(view);
++	dns_view_weakdetach(&view);
+ }
+ 
+ isc_result_t
+@@ -809,6 +776,7 @@ dns_view_createresolver(dns_view_t *view,
+ 	event = &view->resevent;
+ 	dns_resolver_whenshutdown(view->resolver, view->task, &event);
+ 	view->attributes &= ~DNS_VIEWATTR_RESSHUTDOWN;
++	isc_refcount_increment(&view->weakrefs, NULL);
+ 
+ 	result = isc_mem_create(0, 0, &mctx);
+ 	if (result != ISC_R_SUCCESS) {
+@@ -826,6 +794,7 @@ dns_view_createresolver(dns_view_t *view,
+ 	event = &view->adbevent;
+ 	dns_adb_whenshutdown(view->adb, view->task, &event);
+ 	view->attributes &= ~DNS_VIEWATTR_ADBSHUTDOWN;
++	isc_refcount_increment(&view->weakrefs, NULL);
+ 
+ 	result = dns_requestmgr_create(view->mctx, timermgr, socketmgr,
+ 				      dns_resolver_taskmgr(view->resolver),
+@@ -840,6 +809,7 @@ dns_view_createresolver(dns_view_t *view,
+ 	event = &view->reqevent;
+ 	dns_requestmgr_whenshutdown(view->requestmgr, view->task, &event);
+ 	view->attributes &= ~DNS_VIEWATTR_REQSHUTDOWN;
++	isc_refcount_increment(&view->weakrefs, NULL);
+ 
+ 	return (ISC_R_SUCCESS);
+ }
+diff --git a/lib/isc/app_api.c b/lib/isc/app_api.c
+index 5563c7cc0b..40ec2d93b8 100644
+--- a/lib/isc/app_api.c
++++ b/lib/isc/app_api.c
+@@ -23,6 +23,7 @@
+ static isc_mutex_t createlock;
+ static isc_once_t once = ISC_ONCE_INIT;
+ static isc_appctxcreatefunc_t appctx_createfunc = NULL;
++static isc_mutex_t runninglock;
+ static isc_boolean_t is_running = ISC_FALSE;
+ 
+ #define ISCAPI_APPMETHODS_VALID(m) ISC_MAGIC_VALID(m, ISCAPI_APPMETHODS_MAGIC)
+@@ -30,6 +31,7 @@ static isc_boolean_t is_running = ISC_FALSE;
+ static void
+ initialize(void) {
+ 	RUNTIME_CHECK(isc_mutex_init(&createlock) == ISC_R_SUCCESS);
++	RUNTIME_CHECK(isc_mutex_init(&runninglock) == ISC_R_SUCCESS);
+ }
+ 
+ isc_result_t
+@@ -196,9 +198,15 @@ isc_app_run() {
+ 	if (isc_bind9) {
+ 		isc_result_t result;
+ 
++		RUNTIME_CHECK(isc_once_do(&once, initialize) == ISC_R_SUCCESS);
++
++		LOCK(&runninglock);
+ 		is_running = ISC_TRUE;
++		UNLOCK(&runninglock);
+ 		result = isc__app_run();
++		LOCK(&runninglock);
+ 		is_running = ISC_FALSE;
++		UNLOCK(&runninglock);
+ 
+ 		return (result);
+ 	}
+@@ -208,7 +216,15 @@ isc_app_run() {
+ 
+ isc_boolean_t
+ isc_app_isrunning() {
+-	return (is_running);
++	isc_boolean_t running;
++
++	RUNTIME_CHECK(isc_once_do(&once, initialize) == ISC_R_SUCCESS);
++
++	LOCK(&runninglock);
++	running = is_running;
++	UNLOCK(&runninglock);
++
++	return (running);
+ }
+ 
+ isc_result_t
+-- 
+2.21.1
+

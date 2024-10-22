@@ -1,0 +1,36 @@
+diff --git a/lib/isc-pkcs11/tests/Atffile b/lib/isc-pkcs11/tests/Atffile
+index 74a4a77..ff02df1 100644
+--- a/lib/isc-pkcs11/tests/Atffile
++++ b/lib/isc-pkcs11/tests/Atffile
+@@ -31,4 +31,3 @@ tp: symtab_test
+ tp: task_test
+ tp: taskpool_test
+ tp: time_test
+-tp: timer_test
+diff --git a/lib/isc-pkcs11/tests/Kyuafile b/lib/isc-pkcs11/tests/Kyuafile
+index a86824a..94afc41 100644
+--- a/lib/isc-pkcs11/tests/Kyuafile
++++ b/lib/isc-pkcs11/tests/Kyuafile
+@@ -29,4 +29,3 @@ atf_test_program{name='symtab_test'}
+ atf_test_program{name='task_test'}
+ atf_test_program{name='taskpool_test'}
+ atf_test_program{name='time_test'}
+-atf_test_program{name='timer_test'}
+diff --git a/lib/isc/tests/Atffile b/lib/isc/tests/Atffile
+index 74a4a77..ff02df1 100644
+--- a/lib/isc/tests/Atffile
++++ b/lib/isc/tests/Atffile
+@@ -31,4 +31,3 @@ tp: symtab_test
+ tp: task_test
+ tp: taskpool_test
+ tp: time_test
+-tp: timer_test
+diff --git a/lib/isc/tests/Kyuafile b/lib/isc/tests/Kyuafile
+index a86824a..94afc41 100644
+--- a/lib/isc/tests/Kyuafile
++++ b/lib/isc/tests/Kyuafile
+@@ -29,4 +29,3 @@ atf_test_program{name='symtab_test'}
+ atf_test_program{name='task_test'}
+ atf_test_program{name='taskpool_test'}
+ atf_test_program{name='time_test'}
+-atf_test_program{name='timer_test'}

@@ -1,0 +1,38 @@
+From c0134bbea5573b1911d204b28eb8c71351a0173f Mon Sep 17 00:00:00 2001
+From: Mark Andrews <marka@isc.org>
+Date: Fri, 18 Dec 2020 13:31:07 +1100
+Subject: [PATCH] Inactive incorrectly incremented
+
+It is possible to have two threads destroying an rbtdb at the same
+time when detachnode() executes and removes the last reference to
+a node between exiting being set to true for the node and testing
+if the references are zero in maybe_free_rbtdb().  Move NODE_UNLOCK()
+to after checking if references is zero to prevent detachnode()
+changing the reference count too early.
+
+(cherry picked from commit 859d2fdad6d1c6ff20083a4c463a929cbeb26438)
+(cherry picked from commit 25150c15e7cfa73289f04470e2e699ebb7c28fef)
+---
+ lib/dns/rbtdb.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/lib/dns/rbtdb.c b/lib/dns/rbtdb.c
+index 29778d79a5..b01b44c4c7 100644
+--- a/lib/dns/rbtdb.c
++++ b/lib/dns/rbtdb.c
+@@ -1399,11 +1399,11 @@ maybe_free_rbtdb(dns_rbtdb_t *rbtdb) {
+ 	for (i = 0; i < rbtdb->node_lock_count; i++) {
+ 		NODE_LOCK(&rbtdb->node_locks[i].lock, isc_rwlocktype_write);
+ 		rbtdb->node_locks[i].exiting = ISC_TRUE;
+-		NODE_UNLOCK(&rbtdb->node_locks[i].lock, isc_rwlocktype_write);
+ 		if (isc_refcount_current(&rbtdb->node_locks[i].references)
+ 		    == 0) {
+ 			inactive++;
+ 		}
++		NODE_UNLOCK(&rbtdb->node_locks[i].lock, isc_rwlocktype_write);
+ 	}
+ 
+ 	if (inactive != 0) {
+-- 
+2.26.3
+

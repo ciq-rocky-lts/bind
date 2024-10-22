@@ -1,0 +1,34 @@
+From f968f649e7e57eb097fb766be805a2d976d2dcc6 Mon Sep 17 00:00:00 2001
+From: Petr Mensik <pemensik@redhat.com>
+Date: Wed, 27 Nov 2019 16:06:12 +0100
+Subject: [PATCH] Disable listening on IPV6 by default
+
+If configuration file does not mention listen-on-v6, for backward
+compatibility assume none; Upstream changed default value to any; but
+previous RHEL7 version did not have it.
+---
+ bin/named/server.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/bin/named/server.c b/bin/named/server.c
+index 93f9417..eac467f 100644
+--- a/bin/named/server.c
++++ b/bin/named/server.c
+@@ -7781,11 +7781,13 @@ load_configuration(const char *filename, ns_server_t *server,
+ 						       ns_g_mctx, AF_INET6,
+ 						       &listenon);
+ 		} else if (!ns_g_lwresdonly) {
++			isc_boolean_t enable;
+ 			/*
+ 			 * Not specified, use default.
+ 			 */
++			enable = ISC_TF(isc_net_probeipv4() != ISC_R_SUCCESS);
+ 			CHECK(ns_listenlist_default(ns_g_mctx, listen_port,
+-						    -1, ISC_TRUE, &listenon));
++						    -1, enable, &listenon));
+ 		}
+ 		if (listenon != NULL) {
+ 			ns_interfacemgr_setlistenon6(server->interfacemgr,
+-- 
+2.20.1
+

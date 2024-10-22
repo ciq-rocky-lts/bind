@@ -1,0 +1,512 @@
+commit 0f835f7eff5bbd45461b9b43276267ff3c953ece
+Author: Tomas Korbar <tkorbar@redhat.com>
+Date:   Fri Nov 13 10:23:42 2020 +0100
+
+    Fix inline resigning
+
+diff --git a/bin/tests/system/conf.sh.in b/bin/tests/system/conf.sh.in
+index 564c084..5cd0b05 100644
+--- a/bin/tests/system/conf.sh.in
++++ b/bin/tests/system/conf.sh.in
+@@ -69,6 +69,8 @@ LWTEST=$TOP/bin/tests/system/lwresd/lwtest
+ MAKEJOURNAL=$TOP/bin/tests/makejournal
+ PIPEQUERIES=$TOP/bin/tests/system/pipelined/pipequeries
+ SAMPLEUPDATE=$TOP/lib/samples/sample-update
++DEFAULT_ALGORITHM=ECDSAP256SHA256
++DEFAULT_BITS=256
+ 
+ # we don't want a KRB5_CONFIG setting breaking the tests
+ KRB5_CONFIG=/dev/null
+@@ -364,3 +366,5 @@ export SAMPLEUPDATE
+ export SIGNER
+ export SUBDIRS
+ export TESTSOCK6
++export DEFAULT_ALGORITHM
++export DEFAULT_BITS
+diff --git a/bin/tests/system/inline/ns8/example.com.db.in b/bin/tests/system/inline/ns8/example.com.db.in
+new file mode 100644
+index 0000000..eb39aa7
+--- /dev/null
++++ b/bin/tests/system/inline/ns8/example.com.db.in
+@@ -0,0 +1,19 @@
++; Copyright (C) Internet Systems Consortium, Inc. ("ISC")
++;
++; This Source Code Form is subject to the terms of the Mozilla Public
++; License, v. 2.0. If a copy of the MPL was not distributed with this
++; file, You can obtain one at http://mozilla.org/MPL/2.0/.
++;
++; See the COPYRIGHT file distributed with this work for additional
++; information regarding copyright ownership.
++
++$TTL 300	; 5 minutes
++@			IN SOA	ns8 . (
++				2000042407 ; serial
++				20         ; refresh (20 seconds)
++				20         ; retry (20 seconds)
++				1814400    ; expire (3 weeks)
++				3600       ; minimum (1 hour)
++				)
++			NS	ns8
++ns8			A	10.53.0.8
+diff --git a/bin/tests/system/inline/ns8/named.conf.in b/bin/tests/system/inline/ns8/named.conf.in
+new file mode 100644
+index 0000000..ea4876b
+--- /dev/null
++++ b/bin/tests/system/inline/ns8/named.conf.in
+@@ -0,0 +1,146 @@
++/*
++ * Copyright (C) Internet Systems Consortium, Inc. ("ISC")
++ *
++ * This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
++ *
++ * See the COPYRIGHT file distributed with this work for additional
++ * information regarding copyright ownership.
++ */
++
++// NS8
++
++include "../../common/rndc.key";
++
++controls {
++	inet 10.53.0.8 port @CONTROLPORT@ allow { any; } keys { rndc_key; };
++};
++
++options {
++	query-source address 10.53.0.8;
++	notify-source 10.53.0.8;
++	transfer-source 10.53.0.8;
++	port @PORT@;
++	pid-file "named.pid";
++	session-keyfile "session.key";
++	listen-on { 10.53.0.8; };
++	listen-on-v6 { none; };
++	recursion no;
++	notify yes;
++	try-tcp-refresh no;
++	notify-delay 0;
++	allow-new-zones yes;
++};
++
++zone "example01.com" {
++	type master;
++	inline-signing yes;
++	auto-dnssec maintain;
++	file "example01.com.db";
++};
++
++zone "example02.com" {
++	type master;
++	inline-signing yes;
++	auto-dnssec maintain;
++	file "example02.com.db";
++};
++
++zone "example03.com" {
++	type master;
++	inline-signing yes;
++	auto-dnssec maintain;
++	file "example03.com.db";
++};
++
++zone "example04.com" {
++	type master;
++	inline-signing yes;
++	auto-dnssec maintain;
++	file "example04.com.db";
++};
++
++zone "example05.com" {
++	type master;
++	inline-signing yes;
++	auto-dnssec maintain;
++	file "example05.com.db";
++};
++
++zone "example06.com" {
++	type master;
++	inline-signing yes;
++	auto-dnssec maintain;
++	file "example06.com.db";
++};
++
++zone "example07.com" {
++	type master;
++	inline-signing yes;
++	auto-dnssec maintain;
++	file "example07.com.db";
++};
++
++zone "example08.com" {
++	type master;
++	inline-signing yes;
++	auto-dnssec maintain;
++	file "example08.com.db";
++};
++
++zone "example09.com" {
++	type master;
++	inline-signing yes;
++	auto-dnssec maintain;
++	file "example09.com.db";
++};
++
++zone "example10.com" {
++	type master;
++	inline-signing yes;
++	auto-dnssec maintain;
++	file "example10.com.db";
++};
++
++zone "example11.com" {
++	type master;
++	inline-signing yes;
++	auto-dnssec maintain;
++	file "example11.com.db";
++};
++
++zone "example12.com" {
++	type master;
++	inline-signing yes;
++	auto-dnssec maintain;
++	file "example12.com.db";
++};
++
++zone "example13.com" {
++	type master;
++	inline-signing yes;
++	auto-dnssec maintain;
++	file "example13.com.db";
++};
++
++zone "example14.com" {
++	type master;
++	inline-signing yes;
++	auto-dnssec maintain;
++	file "example14.com.db";
++};
++
++zone "example15.com" {
++	type master;
++	inline-signing yes;
++	auto-dnssec maintain;
++	file "example15.com.db";
++};
++
++zone "example16.com" {
++	type master;
++	inline-signing yes;
++	auto-dnssec maintain;
++	file "example16.com.db";
++};
+diff --git a/bin/tests/system/inline/ns8/sign.sh b/bin/tests/system/inline/ns8/sign.sh
+new file mode 100644
+index 0000000..5d36cb9
+--- /dev/null
++++ b/bin/tests/system/inline/ns8/sign.sh
+@@ -0,0 +1,26 @@
++#!/bin/sh -e
++#
++# Copyright (C) Internet Systems Consortium, Inc. ("ISC")
++#
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++#
++# See the COPYRIGHT file distributed with this work for additional
++# information regarding copyright ownership.
++
++SYSTEMTESTTOP=../..
++. $SYSTEMTESTTOP/conf.sh
++
++for zone in example01.com example02.com example03.com example04.com \
++	    example05.com example06.com example07.com example08.com \
++	    example09.com example10.com example11.com example12.com \
++	    example13.com example14.com example15.com example16.com
++do
++  rm -f K${zone}.+*+*.key
++  rm -f K${zone}.+*+*.private
++  keyname=`$KEYGEN -q -a $DEFAULT_ALGORITHM -b $DEFAULT_BITS -n zone $zone`
++  keyname=`$KEYGEN -q -a $DEFAULT_ALGORITHM -b $DEFAULT_BITS -n zone -f KSK $zone`
++  cp example.com.db.in ${zone}.db
++  $SIGNER -S -T 3600 -O raw -o ${zone} ${zone}.db > /dev/null 2>&1
++done
+diff --git a/bin/tests/system/inline/setup.sh b/bin/tests/system/inline/setup.sh
+index 4dd4dd0..13dd6c7 100644
+--- a/bin/tests/system/inline/setup.sh
++++ b/bin/tests/system/inline/setup.sh
+@@ -49,7 +49,9 @@ copy_setports ns4/named.conf.in ns4/named.conf
+ copy_setports ns5/named.conf.pre ns5/named.conf
+ copy_setports ns6/named.conf.in ns6/named.conf
+ copy_setports ns7/named.conf.in ns7/named.conf
++copy_setports ns8/named.conf.in ns8/named.conf
+ 
+ (cd ns3; $SHELL -e sign.sh)
+ (cd ns1; $SHELL -e sign.sh)
+ (cd ns7; $SHELL -e sign.sh)
++(cd ns8; $SHELL -e sign.sh)
+diff --git a/bin/tests/system/inline/tests.sh b/bin/tests/system/inline/tests.sh
+index b517138..22fc1af 100755
+--- a/bin/tests/system/inline/tests.sh
++++ b/bin/tests/system/inline/tests.sh
+@@ -1342,5 +1342,24 @@ grep "type: slave" rndc.out.ns3.test$n > /dev/null || ret=1
+ if [ $ret != 0 ]; then echo_i "failed"; fi
+ status=`expr $status + $ret`
+ 
++n=`expr $n + 1`
++echo_i "checking reload of touched inline zones ($n)"
++echo_ic "pre-reload 'next key event'"
++nextpart ns8/named.run > nextpart.pre$n.out
++count=`grep "zone example[0-9][0-9].com/IN (signed): next key event:" nextpart.pre$n.out | wc -l`
++echo_ic "found: $count/16"
++[ $count -eq 16 ] || ret=1
++echo_ic "touch and reload"
++touch ns8/example??.com.db
++$RNDCCMD 10.53.0.8 reload 2>&1 | sed 's/^/ns3 /' | cat_i
++sleep 5
++echo_ic "post-reload 'next key event'"
++nextpart ns8/named.run > nextpart.post$n.out
++count=`grep "zone example[0-9][0-9].com/IN (signed): next key event:" nextpart.post$n.out | wc -l`
++echo_ic "found: $count/16"
++[ $count -eq 16 ] || ret=1
++if [ $ret != 0 ]; then echo_i "failed"; fi
++status=`expr $status + $ret`
++
+ echo_i "exit status: $status"
+ [ $status -eq 0 ] || exit 1
+diff --git a/lib/dns/zone.c b/lib/dns/zone.c
+index 96c98d5..42a1811 100644
+--- a/lib/dns/zone.c
++++ b/lib/dns/zone.c
+@@ -3611,6 +3611,8 @@ set_resigntime(dns_zone_t *zone) {
+ 	isc_uint32_t nanosecs;
+ 	dns_db_t *db = NULL;
+ 
++	INSIST(LOCKED_ZONE(zone));
++
+ 	/* We only re-sign zones that can be dynamically updated */
+ 	if (zone->update_disabled)
+ 		return;
+@@ -4958,6 +4960,14 @@ zone_postload(dns_zone_t *zone, dns_db_t *db, isc_time_t loadtime,
+ 	    DNS_ZONE_FLAG(zone->secure, DNS_ZONEFLG_LOADED))
+ 	{
+ 		DNS_ZONE_CLRFLAG(zone->secure, DNS_ZONEFLG_LOADPENDING);
++		/*
++		 * Re-start zone maintenance if it had been stalled
++		 * due to DNS_ZONEFLG_LOADPENDING being set when
++		 * zone_maintenance was called.
++		 */
++		if (zone->secure->task != NULL) {
++			zone_settimer(zone->secure, &now);
++		}
+ 	}
+ 
+ 	return (result);
+@@ -6672,14 +6682,15 @@ zone_resigninc(dns_zone_t *zone) {
+ 	if (version != NULL) {
+ 		dns_db_closeversion(db, &version, ISC_FALSE);
+ 		dns_db_detach(&db);
+-	} else if (db != NULL)
++	} else if (db != NULL) {
+ 		dns_db_detach(&db);
++	}
++
++	LOCK_ZONE(zone);
+ 	if (result == ISC_R_SUCCESS) {
+ 		set_resigntime(zone);
+-		LOCK_ZONE(zone);
+ 		zone_needdump(zone, DNS_DUMP_DELAY);
+ 		DNS_ZONE_SETFLAG(zone, DNS_ZONEFLG_NEEDNOTIFY);
+-		UNLOCK_ZONE(zone);
+ 	} else {
+ 		/*
+ 		 * Something failed.  Retry in 5 minutes.
+@@ -6688,6 +6699,7 @@ zone_resigninc(dns_zone_t *zone) {
+ 		isc_interval_set(&ival, 300, 0);
+ 		isc_time_nowplusinterval(&zone->resigntime, &ival);
+ 	}
++	UNLOCK_ZONE(zone);
+ 
+ 	INSIST(version == NULL);
+ }
+@@ -8177,7 +8189,9 @@ zone_nsec3chain(dns_zone_t *zone) {
+ 		nsec3chain = ISC_LIST_HEAD(cleanup);
+ 	}
+ 
++	LOCK_ZONE(zone);
+ 	set_resigntime(zone);
++	UNLOCK_ZONE(zone);
+ 
+  failure:
+ 	if (result != ISC_R_SUCCESS)
+@@ -8841,14 +8855,14 @@ zone_sign(dns_zone_t *zone) {
+ 		signing = ISC_LIST_HEAD(cleanup);
+ 	}
+ 
++	LOCK_ZONE(zone);
+ 	set_resigntime(zone);
+ 
+ 	if (commit) {
+-		LOCK_ZONE(zone);
+ 		DNS_ZONE_SETFLAG(zone, DNS_ZONEFLG_NEEDNOTIFY);
+ 		zone_needdump(zone, DNS_DUMP_DELAY);
+-		UNLOCK_ZONE(zone);
+ 	}
++	UNLOCK_ZONE(zone);
+ 
+  failure:
+ 	/*
+@@ -8885,6 +8899,7 @@ zone_sign(dns_zone_t *zone) {
+ 	} else if (db != NULL)
+ 		dns_db_detach(&db);
+ 
++	LOCK_ZONE(zone);
+ 	if (ISC_LIST_HEAD(zone->signing) != NULL) {
+ 		isc_interval_t interval;
+ 		if (zone->update_disabled || result != ISC_R_SUCCESS)
+@@ -8892,8 +8907,10 @@ zone_sign(dns_zone_t *zone) {
+ 		else
+ 			isc_interval_set(&interval, 0, 10000000); /* 10 ms */
+ 		isc_time_nowplusinterval(&zone->signingtime, &interval);
+-	} else
++ 	} else {
+ 		isc_time_settoepoch(&zone->signingtime);
++	}
++	UNLOCK_ZONE(zone);
+ 
+ 	INSIST(version == NULL);
+ }
+@@ -9983,7 +10000,7 @@ zone_maintenance(dns_zone_t *zone) {
+ 	const char me[] = "zone_maintenance";
+ 	isc_time_t now;
+ 	isc_result_t result;
+-	isc_boolean_t dumping;
++	isc_boolean_t dumping, viewok;
+ 
+ 	REQUIRE(DNS_ZONE_VALID(zone));
+ 	ENTER;
+@@ -10001,8 +10018,12 @@ zone_maintenance(dns_zone_t *zone) {
+ 	 * adb or resolver will be NULL, and we had better not try
+ 	 * to do further maintenance on it.
+ 	 */
+-	if (zone->view == NULL || zone->view->adb == NULL)
++	LOCK_ZONE(zone);
++	viewok = (zone->view != NULL && zone->view->adb != NULL);
++	UNLOCK_ZONE(zone);
++	if (!viewok) {
+ 		return;
++	}
+ 
+ 	TIME_NOW(&now);
+ 
+@@ -10195,8 +10216,14 @@ dns_zone_markdirty(dns_zone_t *zone) {
+ 		}
+ 
+ 		/* XXXMPA make separate call back */
+-		if (result == ISC_R_SUCCESS)
++		if (result == ISC_R_SUCCESS) {
+ 			set_resigntime(zone);
++			if (zone->task != NULL) {
++				isc_time_t now;
++				TIME_NOW(&now);
++				zone_settimer(zone, &now);
++			}
++		}
+ 	}
+ 	if (secure != NULL)
+ 		UNLOCK_ZONE(secure);
+@@ -14418,6 +14445,11 @@ receive_secure_serial(isc_task_t *task, isc_event_t *event) {
+ 	zone->sourceserialset = ISC_TRUE;
+ 	zone_needdump(zone, DNS_DUMP_DELAY);
+ 
++	/*
++	 * Set resign time to make sure it is set to the earliest
++	 * signature expiration.
++	 */
++	set_resigntime(zone);
+ 	TIME_NOW(&timenow);
+ 	zone_settimer(zone, &timenow);
+ 	UNLOCK_ZONE(zone);
+@@ -14436,9 +14468,15 @@ receive_secure_serial(isc_task_t *task, isc_event_t *event) {
+ 
+ 	if (zone->rss_raw != NULL)
+ 		dns_zone_detach(&zone->rss_raw);
+-	if (result != ISC_R_SUCCESS)
++	if (result != ISC_R_SUCCESS) {
++		LOCK_ZONE(zone);
++		set_resigntime(zone);
++		TIME_NOW(&timenow);
++		zone_settimer(zone, &timenow);
++		UNLOCK_ZONE(zone);
+ 		dns_zone_log(zone, ISC_LOG_ERROR, "receive_secure_serial: %s",
+ 			     dns_result_totext(result));
++	}
+ 	if (tuple != NULL)
+ 		dns_difftuple_free(&tuple);
+ 	if (soatuple != NULL)
+@@ -18096,10 +18134,11 @@ zone_rekey(dns_zone_t *zone) {
+ 
+ 	dns_db_closeversion(db, &ver, ISC_TRUE);
+ 
++	LOCK_ZONE(zone);
++
+ 	if (commit) {
+ 		dns_difftuple_t *tuple;
+ 
+-		LOCK_ZONE(zone);
+ 		DNS_ZONE_SETFLAG(zone, DNS_ZONEFLG_NEEDNOTIFY);
+ 
+ 		zone_needdump(zone, DNS_DUMP_DELAY);
+@@ -18217,7 +18256,6 @@ zone_rekey(dns_zone_t *zone) {
+ 		 * Schedule the next resigning event
+ 		 */
+ 		set_resigntime(zone);
+-		UNLOCK_ZONE(zone);
+ 	}
+ 
+ 	isc_time_settoepoch(&zone->refreshkeytime);
+@@ -18231,11 +18269,9 @@ zone_rekey(dns_zone_t *zone) {
+ 		isc_time_t timethen;
+ 		isc_stdtime_t then;
+ 
+-		LOCK_ZONE(zone);
+ 		DNS_ZONE_TIME_ADD(&timenow, zone->refreshkeyinterval,
+ 				  &timethen);
+ 		zone->refreshkeytime = timethen;
+-		UNLOCK_ZONE(zone);
+ 
+ 		for (key = ISC_LIST_HEAD(dnskeys);
+ 		     key != NULL;
+@@ -18246,12 +18282,10 @@ zone_rekey(dns_zone_t *zone) {
+ 				continue;
+ 
+ 			DNS_ZONE_TIME_ADD(&timenow, then - now, &timethen);
+-			LOCK_ZONE(zone);
+ 			if (isc_time_compare(&timethen,
+ 					     &zone->refreshkeytime) < 0) {
+ 				zone->refreshkeytime = timethen;
+ 			}
+-			UNLOCK_ZONE(zone);
+ 		}
+ 
+ 		zone_settimer(zone, &timenow);
+@@ -18259,6 +18293,7 @@ zone_rekey(dns_zone_t *zone) {
+ 		isc_time_formattimestamp(&zone->refreshkeytime, timebuf, 80);
+ 		dns_zone_log(zone, ISC_LOG_INFO, "next key event: %s", timebuf);
+ 	}
++	UNLOCK_ZONE(zone);
+ 
+  done:
+ 	dns_diff_clear(&diff);
+@@ -18293,8 +18328,10 @@ zone_rekey(dns_zone_t *zone) {
+ 	 * Something went wrong; try again in ten minutes or
+ 	 * after a key refresh interval, whichever is shorter.
+ 	 */
++	LOCK_ZONE(zone);
+ 	isc_interval_set(&ival, ISC_MIN(zone->refreshkeyinterval, 600), 0);
+ 	isc_time_nowplusinterval(&zone->refreshkeytime, &ival);
++	UNLOCK_ZONE(zone);
+ 	goto done;
+ }
+ 

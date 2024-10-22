@@ -1,0 +1,78 @@
+From a6331686a8e3a5a2b0d1313de84978cd6d9ef65c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Micha=C5=82=20K=C4=99pie=C5=84?= <michal@isc.org>
+Date: Thu, 31 Oct 2019 08:48:35 +0100
+Subject: [PATCH] Prevent query loops for misbehaving servers
+
+If a TCP connection fails while attempting to send a query to a server,
+the fetch context will be restarted without marking the target server as
+a bad one.  If this happens for a server which:
+
+  - was already marked with the DNS_FETCHOPT_EDNS512 flag,
+  - responds to EDNS queries with the UDP payload size set to 512 bytes,
+  - does not send response packets larger than 512 bytes,
+
+and the response for the query being sent is larger than 512 byes, then
+named will pointlessly alternate between sending UDP queries with EDNS
+UDP payload size set to 512 bytes (which are responded to with truncated
+answers) and TCP connections until the fetch context retry limit is
+reached.  Prevent such query loops by marking the server as bad for a
+given fetch context if the advertised EDNS UDP payload size for that
+server gets reduced to 512 bytes and it is impossible to reach it using
+TCP.
+
+(cherry picked from commit 6cd115994e0d10631172c56a7dab1ace83e946b4)
+---
+ bin/tests/system/legacy/tests.sh | 11 +++++++++++
+ lib/dns/resolver.c               | 13 +++++++++++++
+ 2 files changed, 24 insertions(+)
+
+diff --git a/bin/tests/system/legacy/tests.sh b/bin/tests/system/legacy/tests.sh
+index c4356f2..7c30dcb 100755
+--- a/bin/tests/system/legacy/tests.sh
++++ b/bin/tests/system/legacy/tests.sh
+@@ -142,6 +142,17 @@ grep "status: NOERROR" dig.out.test$n > /dev/null || ret=1
+ if [ $ret != 0 ]; then echo_i "failed"; fi
+ status=`expr $status + $ret`
+ 
++n=`expr $n + 1`
++echo_i "checking recursive lookup to edns 512 + no tcp server does not cause query loops ($n)"
++ret=0
++sent=`grep -c -F "sending packet to 10.53.0.7" ns1/named.run`
++if [ $sent -ge 10 ]; then
++	echo_i "ns1 sent $sent queries to ns7, expected less than 10"
++	ret=1
++fi
++if [ $ret != 0 ]; then echo_i "failed"; fi
++status=`expr $status + $ret`
++
+ if $SHELL ../testcrypto.sh > /dev/null 2>&1
+ then
+     $PERL $SYSTEMTESTTOP/stop.pl . ns1
+diff --git a/lib/dns/resolver.c b/lib/dns/resolver.c
+index 0384b15..36f6b6c 100644
+--- a/lib/dns/resolver.c
++++ b/lib/dns/resolver.c
+@@ -2744,10 +2744,22 @@ resquery_connected(isc_task_t *task, isc_event_t *event) {
+ 			 * No route to remote.
+ 			 */
+ 			isc_socket_detach(&query->tcpsocket);
++			/*
++			 * Do not query this server again in this fetch context
++			 * if we already tried reducing the advertised EDNS UDP
++			 * payload size to 512 bytes and the server is
++			 * unavailable over TCP.  This prevents query loops
++			 * lasting until the fetch context restart limit is
++			 * reached when attempting to get answers whose size
++			 * exceeds 512 bytes from broken servers.
++			 */
++			if ((query->options & DNS_FETCHOPT_EDNS512) != 0) {
++				add_bad(fctx, query->addrinfo, sevent->result,
++					badns_unreachable);
++			}
+ 			fctx_cancelquery(&query, NULL, NULL, ISC_TRUE, ISC_FALSE);
+ 			retry = ISC_TRUE;
+ 			break;
+-
+ 		default:
+ 			FCTXTRACE3("query canceled in connected() due to "
+ 				   "unexpected event result; responding",

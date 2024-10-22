@@ -1,0 +1,56 @@
+From 26c4f3e1c9bcba6f61c44af4bfa7c585bfe43f0b Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Micha=C5=82=20K=C4=99pie=C5=84?= <michal@isc.org>
+Date: Mon, 24 Sep 2018 19:33:16 +0200
+Subject: [PATCH] Prevent a race after zone load
+
+Zone loading happens in a different task (zone->loadtask) than other
+zone actions (zone->task).  Thus, when zone_postload() is called in the
+context of zone->loadtask, it may cause zone maintenance to be queued in
+zone->task and another thread can then execute zone_maintenance() before
+zone_postload() gets a chance to finish its work in the first thread.
+This would not be a problem if zone_maintenance() accounted for this
+possibility by locking the zone before checking the state of its
+DNS_ZONEFLG_LOADPENDING flag.  However, the zone is currently not locked
+before the state of that flag is checked, which may prevent zone
+maintenance from happening despite zone_postload() scheduling it.  Fix
+by locking the zone in zone_maintenance() before checking the state of
+the zone's DNS_ZONEFLG_LOADPENDING flag.
+
+(cherry picked from commit 56003e9f9f72c8be67d553f4dbd16eba849ca864)
+---
+ lib/dns/zone.c | 12 +++++-------
+ 1 file changed, 5 insertions(+), 7 deletions(-)
+
+diff --git a/lib/dns/zone.c b/lib/dns/zone.c
+index 42a1811..f2ae6f3 100644
+--- a/lib/dns/zone.c
++++ b/lib/dns/zone.c
+@@ -10005,12 +10005,6 @@ zone_maintenance(dns_zone_t *zone) {
+ 	REQUIRE(DNS_ZONE_VALID(zone));
+ 	ENTER;
+ 
+-	/*
+-	 * Are we pending load/reload?
+-	 */
+-	if (DNS_ZONE_FLAG(zone, DNS_ZONEFLG_LOADPENDING))
+-		return;
+-
+ 	/*
+ 	 * Configuring the view of this zone may have
+ 	 * failed, for example because the config file
+@@ -10019,7 +10013,11 @@ zone_maintenance(dns_zone_t *zone) {
+ 	 * to do further maintenance on it.
+ 	 */
+ 	LOCK_ZONE(zone);
+-	viewok = (zone->view != NULL && zone->view->adb != NULL);
++	/*
++	 * Are we pending load/reload?
++	 */
++	viewok = (!DNS_ZONE_FLAG(zone, DNS_ZONEFLG_LOADPENDING) &&
++		  zone->view != NULL && zone->view->adb != NULL);
+ 	UNLOCK_ZONE(zone);
+ 	if (!viewok) {
+ 		return;
+-- 
+2.31.1
+

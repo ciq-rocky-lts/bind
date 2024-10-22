@@ -1,0 +1,246 @@
+From bd79638f1c2c8f765e316c30b15dfb3e5d31e1e4 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Witold=20Kr=C4=99cicki?= <wpk@isc.org>
+Date: Thu, 3 Jan 2019 14:58:05 +0100
+Subject: [PATCH] If possible don't use forwarders when priming the resolver.
+
+If we try to fetch a record from cache and need to look into
+hints database we assume that the resolver is not primed and
+start dns_resolver_prime(). Priming query is supposed to return
+NSes for "." in ANSWER section and glue records for them in
+ADDITIONAL section, so that we can fill that info in 'regular'
+cache and not use hints db anymore.
+However, if we're using a forwarder the priming query goes through
+it, and if it's configured to return minimal answers we won't get
+the addresses of root servers in ADDITIONAL section. Since the
+only records for root servers we have are in hints database we'll
+try to prime the resolver with every single query.
+
+This patch adds a DNS_FETCHOPT_NOFORWARD flag which avoids using
+forwarders if possible (that is if we have forward-first policy).
+Using this flag on priming fetch fixes the problem as we get the
+proper glue. With forward-only policy the problem is non-existent,
+as we'll never ask for root server addresses because we'll never
+have a need to query them.
+
+Also added a test to confirm priming queries are not forwarded.
+
+(cherry picked from commit b49310ac06ac87733dc2867828e61370a84b2a9a)
+(cherry picked from commit f8963ad70e222edad0c1e64f855f7fb41fb13c3c)
+(cherry picked from commit aa9866c390a21d6984aa75cdb84d7bc77e114c2f)
+---
+ bin/tests/system/forward/ns4/named.conf.in |  3 ++
+ bin/tests/system/forward/ns7/named.conf.in | 28 +++++++++++++++++
+ bin/tests/system/forward/ns7/root.db       | 28 +++++++++++++++++
+ bin/tests/system/forward/setup.sh          |  1 +
+ bin/tests/system/forward/tests.sh          | 12 ++++++++
+ lib/dns/include/dns/resolver.h             | 36 ++++++++++++----------
+ lib/dns/resolver.c                         | 17 ++++++++--
+ 7 files changed, 106 insertions(+), 19 deletions(-)
+ create mode 100644 bin/tests/system/forward/ns7/named.conf.in
+ create mode 100644 bin/tests/system/forward/ns7/root.db
+
+diff --git a/bin/tests/system/forward/ns4/named.conf.in b/bin/tests/system/forward/ns4/named.conf.in
+index 480530b0f2..643e1271b5 100644
+--- a/bin/tests/system/forward/ns4/named.conf.in
++++ b/bin/tests/system/forward/ns4/named.conf.in
+@@ -17,6 +17,9 @@ options {
+ 	pid-file "named.pid";
+ 	listen-on { 10.53.0.4; };
+ 	listen-on-v6 { none; };
++	recursion yes;
++	dnssec-validation yes;
++	minimal-responses yes;
+ };
+ 
+ zone "." {
+diff --git a/bin/tests/system/forward/ns7/named.conf.in b/bin/tests/system/forward/ns7/named.conf.in
+new file mode 100644
+index 0000000000..d9f5e8a9db
+--- /dev/null
++++ b/bin/tests/system/forward/ns7/named.conf.in
+@@ -0,0 +1,28 @@
++/*
++ * Copyright (C) Internet Systems Consortium, Inc. ("ISC")
++ *
++ * This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
++ *
++ * See the COPYRIGHT file distributed with this work for additional
++ * information regarding copyright ownership.
++ */
++
++options {
++	query-source address 10.53.0.7;
++	notify-source 10.53.0.7;
++	transfer-source 10.53.0.7;
++	port @PORT@;
++	pid-file "named.pid";
++	listen-on { 10.53.0.7; };
++	listen-on-v6 { none; };
++	forwarders { 10.53.0.4; };
++	forward first;
++	dnssec-validation yes;
++};
++
++zone "." {
++	type hint;
++	file "root.db";
++};
+diff --git a/bin/tests/system/forward/ns7/root.db b/bin/tests/system/forward/ns7/root.db
+new file mode 100644
+index 0000000000..7346810ba6
+--- /dev/null
++++ b/bin/tests/system/forward/ns7/root.db
+@@ -0,0 +1,28 @@
++; Copyright (C) Internet Systems Consortium, Inc. ("ISC")
++;
++; This Source Code Form is subject to the terms of the Mozilla Public
++; License, v. 2.0. If a copy of the MPL was not distributed with this
++; file, You can obtain one at http://mozilla.org/MPL/2.0/.
++;
++; See the COPYRIGHT file distributed with this work for additional
++; information regarding copyright ownership.
++
++$TTL 300
++. 			IN SOA	gson.nominum.com. a.root.servers.nil. (
++				2000042100   	; serial
++				600         	; refresh
++				600         	; retry
++				1200    	; expire
++				600       	; minimum
++				)
++.			NS	a.root-servers.nil.
++a.root-servers.nil.	A	10.53.0.1
++
++example1		NS	ns.example1
++ns.example1		A	10.53.0.1
++
++example2		NS	ns.example2
++ns.example2		A	10.53.0.1
++
++example3		NS	ns.example3
++ns.example3		A	10.53.0.1
+diff --git a/bin/tests/system/forward/setup.sh b/bin/tests/system/forward/setup.sh
+index c63aeb10d2..d64579e590 100644
+--- a/bin/tests/system/forward/setup.sh
++++ b/bin/tests/system/forward/setup.sh
+@@ -18,3 +18,4 @@ copy_setports ns2/named.conf.in ns2/named.conf
+ copy_setports ns3/named.conf.in ns3/named.conf
+ copy_setports ns4/named.conf.in ns4/named.conf
+ copy_setports ns5/named.conf.in ns5/named.conf
++copy_setports ns7/named.conf.in ns7/named.conf
+diff --git a/bin/tests/system/forward/tests.sh b/bin/tests/system/forward/tests.sh
+index f23cde1751..8c6496037d 100644
+--- a/bin/tests/system/forward/tests.sh
++++ b/bin/tests/system/forward/tests.sh
+@@ -131,5 +131,17 @@ $CHECKCONF ula-notinherited.conf | grep "forward first;" >/dev/null && ret=1
+ if [ $ret != 0 ]; then echo_i "failed"; fi
+ status=`expr $status + $ret`
+ 
++echo_i "checking that priming queries are not forwarded"
++ret=0
++$DIG $DIGOPTS +noadd +noauth txt.example1. txt @10.53.0.7 > dig.out.f7 || ret=1
++sent=`sed -n '/sending packet to 10.53.0.1/,/^$/p' ns7/named.run | grep ";.*IN.*NS" | wc -l`
++[ $sent -eq 1 ] || ret=1
++sent=`grep "10.53.0.7#.* (.): query '\./NS/IN' approved" ns4/named.run | wc -l`
++[ $sent -eq 0 ] || ret=1
++sent=`grep "10.53.0.7#.* (.): query '\./NS/IN' approved" ns1/named.run | wc -l`
++[ $sent -eq 1 ] || ret=1
++if [ $ret != 0 ]; then echo_i "failed"; fi
++status=`expr $status + $ret`
++
+ echo_i "exit status: $status"
+ [ $status -eq 0 ] || exit 1
+diff --git a/lib/dns/include/dns/resolver.h b/lib/dns/include/dns/resolver.h
+index f2f8714d16..e1a10295f3 100644
+--- a/lib/dns/include/dns/resolver.h
++++ b/lib/dns/include/dns/resolver.h
+@@ -88,23 +88,25 @@ typedef enum {
+ /*
+  * Options that modify how a 'fetch' is done.
+  */
+-#define DNS_FETCHOPT_TCP		0x0001	     /*%< Use TCP. */
+-#define DNS_FETCHOPT_UNSHARED		0x0002	     /*%< See below. */
+-#define DNS_FETCHOPT_RECURSIVE		0x0004	     /*%< Set RD? */
+-#define DNS_FETCHOPT_NOEDNS0		0x0008	     /*%< Do not use EDNS. */
+-#define DNS_FETCHOPT_FORWARDONLY	0x0010	     /*%< Only use forwarders. */
+-#define DNS_FETCHOPT_NOVALIDATE		0x0020	     /*%< Disable validation. */
+-#define DNS_FETCHOPT_EDNS512		0x0040	     /*%< Advertise a 512 byte
+-							  UDP buffer. */
+-#define DNS_FETCHOPT_WANTNSID		0x0080	     /*%< Request NSID */
+-#define DNS_FETCHOPT_PREFETCH		0x0100	     /*%< Do prefetch */
+-#define DNS_FETCHOPT_NOCDFLAG		0x0200	     /*%< Don't set CD flag. */
+-#define DNS_FETCHOPT_NONTA		0x0400	     /*%< Ignore NTA table. */
+-/* RESERVED ECS				0x0000 */
+-/* RESERVED ECS				0x1000 */
+-/* RESERVED ECS				0x2000 */
+-/* RESERVED TCPCLIENT			0x4000 */
+-#define DNS_FETCHOPT_NOCACHED		0x8000	     /*%< Force cache update. */
++#define DNS_FETCHOPT_TCP		0x00001	     /*%< Use TCP. */
++#define DNS_FETCHOPT_UNSHARED		0x00002	     /*%< See below. */
++#define DNS_FETCHOPT_RECURSIVE		0x00004	     /*%< Set RD? */
++#define DNS_FETCHOPT_NOEDNS0		0x00008	     /*%< Do not use EDNS. */
++#define DNS_FETCHOPT_FORWARDONLY	0x00010	     /*%< Only use forwarders. */
++#define DNS_FETCHOPT_NOVALIDATE		0x00020	     /*%< Disable validation. */
++#define DNS_FETCHOPT_EDNS512		0x00040	     /*%< Advertise a 512 byte
++					0		  UDP buffer. */
++#define DNS_FETCHOPT_WANTNSID		0x00080	     /*%< Request NSID */
++#define DNS_FETCHOPT_PREFETCH		0x00100	     /*%< Do prefetch */
++#define DNS_FETCHOPT_NOCDFLAG		0x00200	     /*%< Don't set CD flag. */
++#define DNS_FETCHOPT_NONTA		0x00400	     /*%< Ignore NTA table. */
++/* RESERVED ECS				0x00000 */
++/* RESERVED ECS				0x01000 */
++/* RESERVED ECS				0x02000 */
++/* RESERVED TCPCLIENT			0x04000 */
++#define DNS_FETCHOPT_NOCACHED		0x08000	     /*%< Force cache update. */
++#define DNS_FETCHOPT_NOFORWARD		0x80000 /*%< Do not use forwarders
++							if possible. */
+ 
+ /* Reserved in use by adb.c		0x00400000 */
+ #define	DNS_FETCHOPT_EDNSVERSIONSET	0x00800000
+diff --git a/lib/dns/resolver.c b/lib/dns/resolver.c
+index 301ad52fe2..f701a09be9 100644
+--- a/lib/dns/resolver.c
++++ b/lib/dns/resolver.c
+@@ -3261,6 +3261,18 @@ fctx_getaddresses(fetchctx_t *fctx, isc_boolean_t badcache) {
+ 	INSIST(ISC_LIST_EMPTY(fctx->forwaddrs));
+ 	INSIST(ISC_LIST_EMPTY(fctx->altaddrs));
+ 
++	/*
++	 * If we have DNS_FETCHOPT_NOFORWARD set and forwarding policy
++	 * allows us to not forward - skip forwarders and go straight
++	 * to NSes. This is currently used to make sure that priming query
++	 * gets root servers' IP addresses in ADDITIONAL section.
++	 */
++	if ((fctx->options & DNS_FETCHOPT_NOFORWARD) != 0 &&
++	    (fctx->fwdpolicy != dns_fwdpolicy_only))
++	{
++		goto normal_nses;
++	}
++
+ 	/*
+ 	 * If this fctx has forwarders, use them; otherwise use any
+ 	 * selective forwarders specified in the view; otherwise use the
+@@ -3346,7 +3358,7 @@ fctx_getaddresses(fetchctx_t *fctx, isc_boolean_t badcache) {
+ 	/*
+ 	 * Normal nameservers.
+ 	 */
+-
++ normal_nses:
+ 	stdoptions = DNS_ADBFIND_WANTEVENT | DNS_ADBFIND_EMPTYEVENT;
+ 	if (fctx->restarts == 1) {
+ 		/*
+@@ -9194,7 +9206,8 @@ dns_resolver_prime(dns_resolver_t *res) {
+ 		LOCK(&res->primelock);
+ 		result = dns_resolver_createfetch(res, dns_rootname,
+ 						  dns_rdatatype_ns,
+-						  NULL, NULL, NULL, 0,
++						  NULL, NULL, NULL,
++						  DNS_FETCHOPT_NOFORWARD,
+ 						  res->buckets[0].task,
+ 						  prime_done,
+ 						  res, rdataset, NULL,
+-- 
+2.21.1
+

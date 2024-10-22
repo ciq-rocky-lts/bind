@@ -1,0 +1,76 @@
+From ba56e64560c5907e99186116623f2899b8520b68 Mon Sep 17 00:00:00 2001
+From: Petr Mensik <pemensik@redhat.com>
+Date: Wed, 2 Oct 2019 14:00:13 +0200
+Subject: [PATCH] Revert "3640.   [bug]           ndots was not being checked
+ when searching.  Only"
+
+This reverts commit 8afea636ab0c07399aa3e2410b2cfbd41099df98.
+
+Revert is only partial. Absolute names does not search. Name with dots
+tries first absolute, then relative with search appended.
+---
+ bin/dig/dighost.c        | 8 +++-----
+ bin/dig/nslookup.c       | 3 ++-
+ bin/dig/nslookup.docbook | 2 +-
+ 3 files changed, 6 insertions(+), 7 deletions(-)
+
+diff --git a/bin/dig/dighost.c b/bin/dig/dighost.c
+index d46379ddc2..30b19b3121 100644
+--- a/bin/dig/dighost.c
++++ b/bin/dig/dighost.c
+@@ -2273,14 +2273,12 @@ next_origin(dig_lookup_t *oldlookup) {
+ 		return (ISC_FALSE);
+ 
+ 	/*
+-	 * Check for a absolute name or ndots being met.
++	 * Check for a absolute name.
+ 	 */
+ 	name = dns_fixedname_initname(&fixed);
+ 	result = dns_name_fromstring2(name, oldlookup->textname, NULL,
+ 				      0, NULL);
+-	if (result == ISC_R_SUCCESS &&
+-	    (dns_name_isabsolute(name) ||
+-	     (int)dns_name_countlabels(name) > ndots))
++	if (result == ISC_R_SUCCESS && dns_name_isabsolute(name))
+ 		return (ISC_FALSE);
+ 
+ 	if (oldlookup->origin == NULL && !oldlookup->need_search)
+@@ -4215,7 +4213,7 @@ recv_done(isc_task_t *task, isc_event_t *event) {
+ 	} else if (l->sendcookie && msg->opt != NULL)
+ 		process_opt(l, msg);
+ 	if (!l->doing_xfr || l->xfr_q == query) {
+-		if (msg->rcode == dns_rcode_nxdomain &&
++		if (msg->rcode != dns_rcode_noerror &&
+ 		    (l->origin != NULL || l->need_search)) {
+ 			if (!next_origin(query->lookup) || showsearch) {
+ 				dighost_printmessage(query, msg, ISC_TRUE);
+diff --git a/bin/dig/nslookup.c b/bin/dig/nslookup.c
+index 89a615bf1c..5c8aa51a48 100644
+--- a/bin/dig/nslookup.c
++++ b/bin/dig/nslookup.c
+@@ -472,7 +472,8 @@ printmessage(dig_query_t *query, dns_message_t *msg, isc_boolean_t headers) {
+ 		dns_name_format(query->lookup->name,
+ 				nametext, sizeof(nametext));
+ 		printf("** server can't find %s: %s\n",
+-		       nametext, rcode_totext(msg->rcode));
++		       (msg->rcode != dns_rcode_nxdomain) ? nametext :
++		       query->lookup->textname, rcode_totext(msg->rcode));
+ 		debug("returning with rcode == 0");
+ 
+ 		/* the lookup failed */
+diff --git a/bin/dig/nslookup.docbook b/bin/dig/nslookup.docbook
+index 86a09c658e..e3e8869e33 100644
+--- a/bin/dig/nslookup.docbook
++++ b/bin/dig/nslookup.docbook
+@@ -412,7 +412,7 @@ nslookup -query=hinfo  -timeout=10
+                 <listitem>
+                   <para>
+ 		    Set the number of dots (label separators) in a domain
+-		    that will disable searching.  Absolute names always
++		    that will reverse order of searching.  Absolute names always
+ 		    stop searching.
+                   </para>
+                 </listitem>
+-- 
+2.20.1
+

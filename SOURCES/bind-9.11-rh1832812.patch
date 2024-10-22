@@ -1,0 +1,129 @@
+diff --git a/bin/tests/system/forward/ns4/malicious.db b/bin/tests/system/forward/ns4/malicious.db
+new file mode 100644
+index 0000000000000000000000000000000000000000..b47208c1640eaf40d9c23bfb4598000fd068b814
+--- /dev/null
++++ b/bin/tests/system/forward/ns4/malicious.db
+@@ -0,0 +1,22 @@
++; Copyright (C) Internet Systems Consortium, Inc. ("ISC")
++;
++; This Source Code Form is subject to the terms of the Mozilla Public
++; License, v. 2.0. If a copy of the MPL was not distributed with this
++; file, You can obtain one at http://mozilla.org/MPL/2.0/.
++;
++; See the COPYRIGHT file distributed with this work for additional
++; information regarding copyright ownership.
++
++$TTL    86400
++@       IN      SOA     malicious. admin.malicious. (
++                              1         ; Serial
++                         604800         ; Refresh
++                          86400         ; Retry
++                        2419200         ; Expire
++                          86400 )       ; Negative Cache TTL
++
++@           IN    NS      ns
++
++ns          IN    A       10.53.0.4
++
++target      IN    CNAME   subdomain.rebind.
+diff --git a/bin/tests/system/forward/ns4/named.conf.in b/bin/tests/system/forward/ns4/named.conf.in
+index 643e1271b53ae85e91a169413259afe84dfe1fee..fee76b41e5d46d5bfdb9fc10bd6e914436417a2b 100644
+--- a/bin/tests/system/forward/ns4/named.conf.in
++++ b/bin/tests/system/forward/ns4/named.conf.in
+@@ -55,3 +55,8 @@ zone "grafted" {
+ 	forward only;
+ 	forwarders { 10.53.0.2; };
+ };
++
++zone "malicious." {
++	type master;
++	file "malicious.db";
++};
+diff --git a/bin/tests/system/forward/ns5/named.conf.in b/bin/tests/system/forward/ns5/named.conf.in
+index 0e65985d52634654cf3ebb757cd1f0296e5d9cb6..6742222d4d088807ce1765c1073ef8ba16768d9c 100644
+--- a/bin/tests/system/forward/ns5/named.conf.in
++++ b/bin/tests/system/forward/ns5/named.conf.in
+@@ -19,9 +19,16 @@ options {
+ 	listen-on-v6 { none; };
+ 	forward only;
+ 	forwarders { 10.53.0.4; };
++	deny-answer-aliases { "rebind"; };
++	dnssec-validation yes;
+ };
+ 
+ zone "." {
+ 	type hint;
+ 	file "root.db";
+ };
++
++zone "rebind" {
++	type master;
++	file "rebind.db";
++};
+diff --git a/bin/tests/system/forward/ns5/rebind.db b/bin/tests/system/forward/ns5/rebind.db
+new file mode 100644
+index 0000000000000000000000000000000000000000..3e71327a4856ab9a164db475423327de0184dd81
+--- /dev/null
++++ b/bin/tests/system/forward/ns5/rebind.db
+@@ -0,0 +1,22 @@
++; Copyright (C) Internet Systems Consortium, Inc. ("ISC")
++;
++; This Source Code Form is subject to the terms of the Mozilla Public
++; License, v. 2.0. If a copy of the MPL was not distributed with this
++; file, You can obtain one at http://mozilla.org/MPL/2.0/.
++;
++; See the COPYRIGHT file distributed with this work for additional
++; information regarding copyright ownership.
++
++$TTL    86400
++@       IN      SOA     rebind. admin.rebind. (
++                              1         ; Serial
++                         604800         ; Refresh
++                          86400         ; Retry
++                        2419200         ; Expire
++                          86400 )       ; Negative Cache TTL
++
++@           IN    NS    ns
++
++ns          IN    A     10.53.0.5
++
++subdomain   IN    A     10.53.0.1
+diff --git a/bin/tests/system/forward/tests.sh b/bin/tests/system/forward/tests.sh
+index 8c64960..1da4136 100644
+--- a/bin/tests/system/forward/tests.sh
++++ b/bin/tests/system/forward/tests.sh
+@@ -143,5 +143,18 @@ sent=`grep "10.53.0.7#.* (.): query '\./NS/IN' approved" ns1/named.run | wc -l`
+ if [ $ret != 0 ]; then echo_i "failed"; fi
+ status=`expr $status + $ret`
+ 
++n=$((n+1))
++echo_i "checking that rebinding protection works in forward only mode ($n)"
++ret=0
++# 10.53.0.5 will forward target.malicious. query to 10.53.0.4
++# which in turn will return a CNAME for subdomain.rebind.
++# to honor the option deny-answer-aliases { "rebind"; };
++# ns5 should return a SERVFAIL to avoid potential rebinding attacks
++dig_with_opts +noadd +noauth @10.53.0.5 target.malicious. > dig.out.$n || ret=1
++grep "status: SERVFAIL" dig.out.$n > /dev/null || ret=1
++if [ $ret != 0 ]; then echo_i "failed"; fi
++status=$((status+ret))
++
++
+ echo_i "exit status: $status"
+ [ $status -eq 0 ] || exit 1
+diff --git a/lib/dns/resolver.c b/lib/dns/resolver.c
+index a8cbb10..39d33e0 100644
+--- a/lib/dns/resolver.c
++++ b/lib/dns/resolver.c
+@@ -6413,8 +6413,10 @@ is_answertarget_allowed(fetchctx_t *fctx, dns_name_t *qname, dns_name_t *rname,
+ 	/*
+ 	 * If the target name is a subdomain of the search domain, allow it.
+ 	 */
+-	if (dns_name_issubdomain(tname, &fctx->domain))
++	if ((fctx->fwdpolicy == dns_fwdpolicy_none) &&
++		dns_name_issubdomain(tname, &fctx->domain)) {
+ 		return (ISC_TRUE);
++	}
+ 
+ 	/*
+ 	 * Otherwise, apply filters.

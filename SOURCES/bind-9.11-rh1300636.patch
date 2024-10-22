@@ -1,0 +1,77 @@
+From cfbb8a96570959a3d7471edbd8df559ea4e73123 Mon Sep 17 00:00:00 2001
+From: Mark Andrews <marka@isc.org>
+Date: Wed, 14 Nov 2018 15:17:48 +1100
+Subject: [PATCH] free tmpzonename and restart_master
+
+(cherry picked from commit 50714a9b35ce80bd8839a52106778d65b6d4d7ba)
+(cherry picked from commit e409b8c6982a275e3fad960b2e66437890ff08e2)
+---
+ bin/nsupdate/nsupdate.c    | 14 ++++++++++++--
+ lib/dns/include/dns/name.h |  5 +++++
+ 2 files changed, 17 insertions(+), 2 deletions(-)
+
+diff --git a/bin/nsupdate/nsupdate.c b/bin/nsupdate/nsupdate.c
+index a0d0278635..7e241c17e9 100644
+--- a/bin/nsupdate/nsupdate.c
++++ b/bin/nsupdate/nsupdate.c
+@@ -158,8 +158,8 @@ static dns_fixedname_t fuserzone;
+ static dns_fixedname_t fzname;
+ static dns_name_t *userzone = NULL;
+ static dns_name_t *zname = NULL;
+-static dns_name_t tmpzonename;
+-static dns_name_t restart_master;
++static dns_name_t tmpzonename = DNS_NAME_INITEMPTY;
++static dns_name_t restart_master = DNS_NAME_INITEMPTY;
+ static dns_tsig_keyring_t *gssring = NULL;
+ static dns_tsigkey_t *tsigkey = NULL;
+ static dst_key_t *sig0key = NULL;
+@@ -2415,6 +2415,8 @@ update_completed(isc_task_t *task, isc_event_t *event) {
+ 	if (usegsstsig) {
+ 		dns_name_free(&tmpzonename, gmctx);
+ 		dns_name_free(&restart_master, gmctx);
++		dns_name_init(&tmpzonename, 0);
++		dns_name_init(&restart_master, 0);
+ 	}
+ 	isc_event_free(&event);
+ 	done_update();
+@@ -2830,6 +2832,8 @@ failed_gssrequest() {
+ 
+ 	dns_name_free(&tmpzonename, gmctx);
+ 	dns_name_free(&restart_master, gmctx);
++	dns_name_init(&tmpzonename, NULL);
++	dns_name_init(&restart_master, NULL);
+ 
+ 	done_update();
+ }
+@@ -3238,6 +3242,12 @@ cleanup(void) {
+ 		isc_mem_free(gmctx, realm);
+ 		realm = NULL;
+ 	}
++	if (dns_name_dynamic(&tmpzonename)) {
++		dns_name_free(&tmpzonename, gmctx);
++	}
++	if (dns_name_dynamic(&restart_master)) {
++		dns_name_free(&restart_master, gmctx);
++	}
+ #endif
+ 
+ 	if (sig0key != NULL)
+diff --git a/lib/dns/include/dns/name.h b/lib/dns/include/dns/name.h
+index be74667ccb..93ddacd80b 100644
+--- a/lib/dns/include/dns/name.h
++++ b/lib/dns/include/dns/name.h
+@@ -181,6 +181,11 @@ LIBDNS_EXTERNAL_DATA extern dns_name_t *dns_wildcardname;
+ 	{NULL, NULL} \
+ }
+ 
++#define DNS_NAME_INITEMPTY { \
++	DNS_NAME_MAGIC, NULL, 0, 0, 0, NULL, NULL, \
++	{ (void *)-1, (void *)-1 }, { NULL, NULL } \
++}
++
+ /*%
+  * Standard size of a wire format name
+  */
+-- 
+2.21.1
+
