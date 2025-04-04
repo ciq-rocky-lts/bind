@@ -67,7 +67,7 @@ Summary:  The Berkeley Internet Name Domain (BIND) DNS (Domain Name System) serv
 Name:     bind
 License:  MPLv2.0
 Version:  9.11.4
-Release:  26%{?PATCHVER:.%{PATCHVER}}%{?PREVER:.%{PREVER}}%{?dist}.17
+Release:  26%{?PATCHVER:.%{PATCHVER}}%{?PREVER:.%{PREVER}}%{?dist}.18
 Epoch:    32
 Url:      http://www.isc.org/products/BIND/
 #
@@ -200,6 +200,7 @@ Patch210: bind-9.11.4-CVE-2023-2828-fixup.patch
 Patch211: bind-9.11-CVE-2024-1737.patch
 Patch212: bind-9.11-CVE-2024-1737-runtime-env.patch
 Patch213: bind-9.11-CVE-2024-1975.patch
+Patch214: bind-9.11-CVE-2024-11187.patch
 
 # SDB patches
 Patch11: bind-9.3.2b2-sdbsrc.patch
@@ -1570,6 +1571,9 @@ rm -rf ${RPM_BUILD_ROOT}
 
 
 %changelog
+* Thu Apr 03 2025 Matt Hink <mhink@ciq.com> - 32:9.11.4-26.P2.18
+- CVE-2024-11187
+
 * Tue Oct 15 2024 Matt Hink <mhink@ciq.com> - 32:9.11.4-26.P2.17
 - Version bump
 
