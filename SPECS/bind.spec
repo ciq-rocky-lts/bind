@@ -56,7 +56,7 @@ Summary:  The Berkeley Internet Name Domain (BIND) DNS (Domain Name System) serv
 Name:     bind
 License:  MPLv2.0
 Version:  9.16.23
-Release:  31%{?dist}.3
+Release:        31.1%{?dist}.3
 Epoch:    32
 Url:      https://www.isc.org/downloads/bind/
 #
@@ -194,6 +194,16 @@ Patch224: bind-9.16-CVE-2025-40780.patch
 # https://gitlab.isc.org/isc-projects/bind9/commit/50479358efdf432d690415131b74b5df158a9d69
 # https://gitlab.isc.org/isc-projects/bind9/commit/33a7db1fe964e55b76b4ac003ecc56cc67028bd9
 Patch225: bind-9.16-CVE-2025-40778.patch
+# CVE-2026-5950 — upstream backport
+Patch226: bind-9.16.23-cve-2026-5950.patch
+# CVE-2026-3039 — upstream backport
+Patch227: bind-9.16.23-cve-2026-3039.patch
+# CVE-2026-5946 — upstream backport
+Patch228: bind-9.16.23-cve-2026-5946.patch
+# CVE-2026-3592 — upstream backport
+Patch229: bind-9.16.23-cve-2026-3592.patch
+# CVE-2025-8677 — upstream backport
+Patch230: bind-9.16.23-cve-2025-8677.patch
 
 %{?systemd_ordering}
 Requires:       coreutils
@@ -1238,6 +1248,13 @@ fi;
 %endif
 
 %changelog
+* Wed May 20 2026 Jason Rodriguez <jrodriguez@ciq.com> - 9.16.23-31.1
+- Fix CVE-2026-5950
+- Fix CVE-2026-3039
+- Fix CVE-2026-5946
+- Fix CVE-2026-3592
+- Fix CVE-2025-8677
+
 * Fri Apr 3 2026 Pratham Patel <ppatel@ciq.com> - 32:9.16.23-31.3
 - Bump release
 
