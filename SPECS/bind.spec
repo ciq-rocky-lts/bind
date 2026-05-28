@@ -56,7 +56,7 @@ Summary:  The Berkeley Internet Name Domain (BIND) DNS (Domain Name System) serv
 Name:     bind
 License:  MPLv2.0
 Version:  9.16.23
-Release:  24%{?dist}.3
+Release:        24.1%{?dist}.4
 Epoch:    32
 Url:      https://www.isc.org/downloads/bind/
 #
@@ -179,6 +179,17 @@ Patch214: bind-9.16-CVE-2024-1737-records-test2.patch
 # https://gitlab.isc.org/isc-projects/bind9/-/commit/c6e6a7af8ac6b575dd3657b0f5cf4248d734c2b0
 Patch215: bind-9.18-CVE-2024-11187-pre-test.patch
 Patch216: bind-9.18-CVE-2024-11187.patch
+
+Patch1001: 0001-9.18-CVE-2025-8677-sec-usr-DNSSEC-validation-fails-i.patch
+Patch1002: 0002-9.16-CVE-2025-40780-sec-usr-Cache-poisoning-due-to-w.patch
+# CVE-2026-5950 — upstream backport
+Patch1003: bind-9.16.23-cve-2026-5950.patch
+# CVE-2026-3039 — upstream backport
+Patch1004: bind-9.16.23-cve-2026-3039.patch
+# CVE-2026-5946 — upstream backport
+Patch1005: bind-9.16.23-cve-2026-5946.patch
+# CVE-2026-3592 — upstream backport
+Patch1006: bind-9.16.23-cve-2026-3592.patch
 
 %{?systemd_ordering}
 Requires:       coreutils
@@ -1223,6 +1234,16 @@ fi;
 %endif
 
 %changelog
+* Thu May 21 2026 Jason Rodriguez <jrodriguez@ciq.com> - 9.16.23-24.1
+- Fix CVE-2026-5950
+- Fix CVE-2026-3039
+- Fix CVE-2026-5946
+- Fix CVE-2026-3592
+
+* Fri Nov 07 2025 Pratham Patel <ppatel@ciq.com> - 32:9.16.23-24.4
+- Fix CVE-2025-8677
+- Fix CVE-2025-40780
+
 * Sat Feb 15 2025 Petr Menšík <pemensik@redhat.com> - 32:9.16.23-24.3
 - Fix test backport changes
 
