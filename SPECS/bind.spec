@@ -54,7 +54,7 @@ Summary:  The Berkeley Internet Name Domain (BIND) DNS (Domain Name System) serv
 Name:     bind
 License:  MPLv2.0
 Version:  9.16.23
-Release:  18%{?dist}.6.1
+Release:        18.1%{?dist}.6.2
 Epoch:    32
 Url:      https://www.isc.org/downloads/bind/
 #
@@ -174,6 +174,17 @@ Patch212: bind-9.16-CVE-2024-1737-types-test.patch
 # backport issue fix
 Patch213: bind-9.16-CVE-2024-1737-records-test2.patch
 Patch214: fix-cve-2024-11187.patch
+
+Patch1001: 0001-9.18-CVE-2025-8677-sec-usr-DNSSEC-validation-fails-i.patch
+Patch1002: 0002-9.16-CVE-2025-40780-sec-usr-Cache-poisoning-due-to-w.patch
+# CVE-2026-5950 — upstream backport
+Patch1003: bind-9.16.23-cve-2026-5950.patch
+# CVE-2026-3039 — upstream backport
+Patch1004: bind-9.16.23-cve-2026-3039.patch
+# CVE-2026-5946 — upstream backport
+Patch1005: bind-9.16.23-cve-2026-5946.patch
+# CVE-2026-3592 — upstream backport
+Patch1006: bind-9.16.23-cve-2026-3592.patch
 
 %{?systemd_ordering}
 Requires:       coreutils
@@ -526,6 +537,13 @@ cp -r lib/ns{,-pkcs11}
 %patch136 -p1 -b .dist_pkcs11
 %patch149 -p1 -b .kyua-pkcs11
 %endif
+
+%patch1001 -p1 -b .CVE-2025-8677
+%patch1002 -p1 -b .CVE-2025-40780
+%patch1003 -p1 -b .cve-2026-5950
+%patch1004 -p1 -b .cve-2026-3039
+%patch1005 -p1 -b .cve-2026-5946
+%patch1006 -p1 -b .cve-2026-3592
 
 # Sparc and s390 arches need to use -fPIE
 %ifarch sparcv9 sparc64 s390 s390x
@@ -1244,6 +1262,16 @@ fi;
 %endif
 
 %changelog
+* Thu May 21 2026 Jason Rodriguez <jrodriguez@ciq.com> - 9.16.23-18.1
+- Fix CVE-2026-5950
+- Fix CVE-2026-3039
+- Fix CVE-2026-5946
+- Fix CVE-2026-3592
+
+* Fri Nov 07 2025 Pratham Patel <ppatel@ciq.com> - 32:9.16.23-18.6.2
+- Fix CVE-2025-8677
+- Fix CVE-2025-40780
+
 * Wed Feb 19 2025 Pratham Patel <ppatel@ciq.com> - 32:9.16.23-18.6.1
 - Fix CVE-2024-11187
 
