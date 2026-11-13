@@ -56,7 +56,7 @@ Summary:  The Berkeley Internet Name Domain (BIND) DNS (Domain Name System) serv
 Name:     bind
 License:  MPLv2.0
 Version:  9.16.23
-Release:        24.1%{?dist}.4
+Release:        24.2%{?dist}.4
 Epoch:    32
 Url:      https://www.isc.org/downloads/bind/
 #
@@ -190,6 +190,20 @@ Patch1004: bind-9.16.23-cve-2026-3039.patch
 Patch1005: bind-9.16.23-cve-2026-5946.patch
 # CVE-2026-3592 — upstream backport
 Patch1006: bind-9.16.23-cve-2026-3592.patch
+# CVE-2026-11331 — upstream backport
+Patch1007: bind-9.16.23-CVE-2026-11331.patch
+# CVE-2026-11721 — upstream backport
+Patch1008: bind-9.16.23-CVE-2026-11721.patch
+# CVE-2026-13321 — upstream backport
+Patch1009: bind-9.16.23-CVE-2026-13321.patch
+# CVE-2025-40778 — upstream backport
+Patch1010: bind-9.16.23-CVE-2025-40778.patch
+# CVE-2026-1519 — upstream backport
+Patch1011: bind-9.16.23-CVE-2026-1519.patch
+# CVE-2026-11622 — upstream backport
+Patch1012: bind-9.16-CVE-2026-11622.patch
+# CVE-2026-13204 — upstream backport
+Patch1013: bind-9.16-CVE-2026-13204.patch
 
 %{?systemd_ordering}
 Requires:       coreutils
@@ -1234,6 +1248,15 @@ fi;
 %endif
 
 %changelog
+* Fri Sep 11 2026 Jason Rodriguez <jrodriguez@ciq.com> - 32:9.16.23-24.2.4
+- Fix CVE-2026-11331
+- Fix CVE-2026-11721
+- Fix CVE-2026-13321
+- Fix CVE-2025-40778
+- Fix CVE-2026-1519
+- Fix CVE-2026-11622
+- Fix CVE-2026-13204
+
 * Thu May 21 2026 Jason Rodriguez <jrodriguez@ciq.com> - 9.16.23-24.1
 - Fix CVE-2026-5950
 - Fix CVE-2026-3039
